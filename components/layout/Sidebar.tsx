@@ -25,6 +25,7 @@ import {
   ChevronRight,
   Receipt,
   ClipboardList,
+  Megaphone,
   type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -56,6 +57,7 @@ const studentSections: NavSection[] = [
       { label: "Certificates", href: "/dashboard/student/certificates", icon: Award },
       { label: "Attendance", href: "/dashboard/student/attendance", icon: ClipboardList },
       { label: "Schedule", href: "/dashboard/student/calendar", icon: CalendarDays },
+      { label: "Announcements", href: "/dashboard/student/announcements", icon: Megaphone },
       { label: "Notifications", href: "/dashboard/student/notifications", icon: Bell, badge: 3 },
       { label: "Settings", href: "/dashboard/student/settings", icon: Settings },
     ],
@@ -75,6 +77,7 @@ const teacherSections: NavSection[] = [
     items: [
       { label: "Attendance", href: "/dashboard/teacher/attendance", icon: ClipboardList },
       { label: "Schedule", href: "/dashboard/teacher/calendar", icon: CalendarDays },
+      { label: "Announcements", href: "/dashboard/teacher/announcements", icon: Megaphone },
       { label: "Notifications", href: "/dashboard/teacher/notifications", icon: Bell, badge: 5 },
     ],
   },
@@ -89,6 +92,7 @@ const adminSections: NavSection[] = [
       { label: "Classes", href: "/dashboard/admin/classes", icon: ClipboardList },
       { label: "Attendance", href: "/dashboard/admin/attendance", icon: BarChart3 },
       { label: "Schedule", href: "/dashboard/admin/schedule", icon: CalendarDays },
+      { label: "Announcements", href: "/dashboard/admin/announcements", icon: Megaphone },
     ],
   },
   {
@@ -179,7 +183,7 @@ export function Sidebar({ role }: SidebarProps) {
 
   const handleLogout = async () => {
     await signOut();
-    router.push("/");
+    window.location.href = "/";
   };
 
   const sections =

@@ -34,6 +34,7 @@ export const scheduleRouter = router({
         courseCode: courses.courseCode,
         group: courses.group,
         teacherName: users.name,
+        startDate: courses.startDate,
       })
       .from(courses)
       .leftJoin(users, eq(courses.teacherId, users.id))

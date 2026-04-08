@@ -12,6 +12,7 @@ import { adminRouter } from "./admin.router";
 import { attendanceRouter } from "./attendance.router";
 import { scheduleRouter } from "./schedule.router";
 import { certificateRouter } from "./certificate.router";
+import { announcementRouter } from "./announcement.router";
 
 export const appRouter = router({
   course: courseRouter,
@@ -27,6 +28,7 @@ export const appRouter = router({
   attendance: attendanceRouter,
   schedule: scheduleRouter,
   certificate: certificateRouter,
+  announcement: announcementRouter,
 });
 
 export type AppRouter = typeof appRouter;

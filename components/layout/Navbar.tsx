@@ -87,7 +87,10 @@ export function Navbar() {
               <motion.button
                 whileHover={{ scale: 1.04 }}
                 whileTap={{ scale: 0.96 }}
-                onClick={() => signOut()}
+                onClick={async () => {
+                  await signOut();
+                  window.location.href = "/";
+                }}
                 className="hidden rounded-md bg-secondary px-3 py-1.5 text-sm font-medium text-secondary-foreground transition-colors hover:bg-secondary/80 md:inline-flex"
               >
                 Sign out
@@ -204,8 +207,9 @@ export function Navbar() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.15 }}
-                    onClick={() => {
-                      signOut();
+                    onClick={async () => {
+                      await signOut();
+                      window.location.href = "/";
                       setMobileOpen(false);
                     }}
                     className="w-full rounded-lg bg-secondary px-3 py-2.5 text-sm font-medium text-secondary-foreground transition-colors hover:bg-secondary/80"

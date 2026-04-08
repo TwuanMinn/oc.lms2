@@ -11,6 +11,7 @@ import * as social from "./schema/social";
 import * as platform from "./schema/platform";
 import * as attendance from "./schema/attendance";
 import * as schedules from "./schema/schedules";
+import * as announcements from "./schema/announcements";
 
 // Optimized for Supabase cloud DB
 const client = postgres(env.DATABASE_URL, {
@@ -22,7 +23,7 @@ const client = postgres(env.DATABASE_URL, {
 });
 
 export const db = drizzle(client, {
-  schema: { ...users, ...courses, ...learning, ...quizzes, ...social, ...platform, ...attendance, ...schedules },
+  schema: { ...users, ...courses, ...learning, ...quizzes, ...social, ...platform, ...attendance, ...schedules, ...announcements },
 });
 
 export type DB = typeof db;
