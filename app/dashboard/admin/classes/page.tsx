@@ -17,6 +17,7 @@ import {
   ChevronRight,
   UserPlus,
   UserMinus,
+  Search,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 
@@ -74,24 +75,28 @@ export default function AdminClassesPage() {
   const [weekCount, setWeekCount] = useState(15);
   const [group, setGroup] = useState("");
   const [createMode, setCreateMode] = useState<"single" | "multi">("multi");
+  const [searchQuery, setSearchQuery] = useState("");
 
-  // Group sessions by courseTitle
+  // Group sessions by base class code (e.g. PM-098 from PM-098-W01)
   const groupedSessions = useMemo(() => {
     if (!data?.sessions) return [];
 
-    const grouped: Record<string, { courseTitle: string; courseId: string; courseGroup: string | null; teacherName: string; sessions: SessionRow[] }> = {};
+    const grouped: Record<string, { courseTitle: string; courseId: string; courseGroup: string | null; teacherName: string; baseCode: string; sessions: SessionRow[] }> = {};
 
     for (const s of data.sessions) {
-      if (!grouped[s.courseTitle]) {
-        grouped[s.courseTitle] = {
+      // Extract base code: "PM-098-W01" → "PM-098", "CS101" → "CS101"
+      const baseCode = s.classCode.replace(/-W\d+$/, "");
+      if (!grouped[baseCode]) {
+        grouped[baseCode] = {
           courseTitle: s.courseTitle,
           courseId: s.courseId,
           courseGroup: s.courseGroup,
           teacherName: s.teacherName,
+          baseCode,
           sessions: [],
         };
       }
-      grouped[s.courseTitle].sessions.push(s);
+      grouped[baseCode].sessions.push(s);
     }
 
     // Sort each group's sessions by scheduledAt
@@ -101,6 +106,18 @@ export default function AdminClassesPage() {
 
     return Object.values(grouped);
   }, [data?.sessions]);
+
+  // Filter grouped sessions by search query
+  const filteredSessions = useMemo(() => {
+    if (!searchQuery.trim()) return groupedSessions;
+    const q = searchQuery.toLowerCase();
+    return groupedSessions.filter(g =>
+      g.courseTitle.toLowerCase().includes(q) ||
+      g.baseCode.toLowerCase().includes(q) ||
+      g.teacherName.toLowerCase().includes(q) ||
+      (g.courseGroup || "").toLowerCase().includes(q)
+    );
+  }, [groupedSessions, searchQuery]);
 
   function resetForm() {
     setClassCode("");
@@ -153,15 +170,36 @@ export default function AdminClassesPage() {
             title="Class Management"
             description={`${groupedSessions.length} course${groupedSessions.length !== 1 ? "s" : ""} · ${data?.total ?? 0} sessions`}
           />
-          <motion.button
-            whileHover={{ scale: 1.04 }}
-            whileTap={{ scale: 0.96 }}
-            onClick={() => setShowForm(!showForm)}
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-colors hover:bg-primary/90"
-          >
-            {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-            {showForm ? "Cancel" : "Create Class"}
-          </motion.button>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search classes..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-64 rounded-xl border border-border/60 bg-background pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all placeholder:text-muted-foreground/60"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <motion.button
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.96 }}
+              onClick={() => setShowForm(!showForm)}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-colors hover:bg-primary/90"
+            >
+              {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+              {showForm ? "Cancel" : "Create Class"}
+            </motion.button>
+          </div>
         </div>
 
         {/* Create Form */}
@@ -355,10 +393,16 @@ export default function AdminClassesPage() {
               <p className="text-lg font-semibold text-muted-foreground">No classes yet</p>
               <p className="text-sm text-muted-foreground mt-1">Create your first class above.</p>
             </div>
+          ) : !filteredSessions.length ? (
+            <div className="rounded-2xl border border-border/50 bg-card p-16 text-center">
+              <Search className="h-12 w-12 mx-auto text-muted-foreground/30 mb-4" />
+              <p className="text-lg font-semibold text-muted-foreground">No results for &ldquo;{searchQuery}&rdquo;</p>
+              <p className="text-sm text-muted-foreground mt-1">Try a different search term.</p>
+            </div>
           ) : (
-            groupedSessions.map((group, gi) => (
+            filteredSessions.map((group, gi) => (
               <CourseGroupCard
-                key={group.courseTitle}
+                key={group.baseCode}
                 group={group}
                 index={gi}
                 onDelete={(id) => deleteSession.mutate({ sessionId: id })}
@@ -381,7 +425,7 @@ function CourseGroupCard({
   onDelete,
   isDeleting,
 }: {
-  group: { courseTitle: string; courseId: string; courseGroup: string | null; teacherName: string; sessions: SessionRow[] };
+  group: { courseTitle: string; courseId: string; courseGroup: string | null; teacherName: string; baseCode: string; sessions: SessionRow[] };
   index: number;
   onDelete: (sessionId: string) => void;
   isDeleting: boolean;
@@ -518,7 +562,6 @@ function StudentManager({ courseId }: { courseId: string }) {
     onSuccess: () => {
       utils.attendance.getCourseStudents.invalidate({ courseId });
       utils.attendance.getSessions.invalidate();
-      setSelectedStudent("");
     },
   });
 
@@ -529,51 +572,95 @@ function StudentManager({ courseId }: { courseId: string }) {
     },
   });
 
-  const [selectedStudent, setSelectedStudent] = useState("");
+  const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState("");
 
   // Filter out already-enrolled students
   const enrolledIds = new Set(students?.map((s) => s.studentId) ?? []);
   const available = allStudents?.users?.filter((u) => !enrolledIds.has(u.id)) ?? [];
+  const filteredAvailable = available.filter(u => 
+    u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    u.email.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <div className="px-6 py-4 bg-muted/5 space-y-3">
-      <h4 className="text-sm font-semibold flex items-center gap-2">
+      <h4 className="text-sm font-semibold flex items-center gap-2 mb-2">
         <Users className="h-4 w-4 text-primary" />
         Enrolled Students ({students?.length ?? 0})
       </h4>
 
-      {/* Add Student */}
-      <div className="flex gap-2">
-        <select
-          value={selectedStudent}
-          onChange={(e) => setSelectedStudent(e.target.value)}
-          className="flex-1 rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none"
-        >
-          <option value="">Select a student to add...</option>
-          {available.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name} ({u.email})
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => {
-            if (selectedStudent) {
-              enrollMut.mutate({ courseId, studentId: selectedStudent });
-            }
-          }}
-          disabled={!selectedStudent || enrollMut.isPending}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-        >
-          {enrollMut.isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <UserPlus className="h-3.5 w-3.5" />
-          )}
-          Add
-        </button>
-      </div>
+      {/* Add Multiple Students */}
+      {available.length > 0 && (
+        <div className="rounded-xl border border-border/60 bg-card overflow-hidden shadow-sm">
+          <div className="p-2 border-b border-border/60 bg-muted/20">
+            <input
+              type="text"
+              placeholder="Search available students..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full text-xs px-3 py-1.5 rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto divide-y divide-border/30">
+            {filteredAvailable.map((u) => (
+              <label
+                key={u.id}
+                className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedStudents.has(u.id)}
+                  onChange={(e) => {
+                    const next = new Set(selectedStudents);
+                    if (e.target.checked) next.add(u.id);
+                    else next.delete(u.id);
+                    setSelectedStudents(next);
+                  }}
+                  className="rounded border-border text-primary focus:ring-primary h-4 w-4"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-foreground">{u.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{u.email}</p>
+                </div>
+              </label>
+            ))}
+            {filteredAvailable.length === 0 && (
+              <div className="p-3 text-center text-xs text-muted-foreground">
+                No students found matching your search.
+              </div>
+            )}
+          </div>
+          <div className="bg-muted/20 p-2.5 flex justify-between items-center border-t border-border/60">
+            <span className="text-xs font-medium text-muted-foreground pl-1">
+              {selectedStudents.size} selected
+            </span>
+            <button
+              type="button"
+              onClick={async () => {
+                const ids = Array.from(selectedStudents);
+                if (!ids.length) return;
+                try {
+                  await Promise.all(ids.map(id => enrollMut.mutateAsync({ courseId, studentId: id })));
+                  setSelectedStudents(new Set());
+                  setSearchTerm("");
+                } catch (e) {
+                  console.error("Batch enrollment failed:", e);
+                }
+              }}
+              disabled={selectedStudents.size === 0 || enrollMut.isPending}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50 transition-all hover:bg-primary/90"
+            >
+              {enrollMut.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <UserPlus className="h-3.5 w-3.5" />
+              )}
+              Add Selected
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Enrolled List */}
       {isLoading ? (

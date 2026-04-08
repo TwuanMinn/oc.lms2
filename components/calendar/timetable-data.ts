@@ -18,29 +18,25 @@ export const DAY_SHORT: Record<Day, string> = {
 };
 
 export const PERIODS: Period[] = [
-  { id: 8, label: "Period 8", start: "08:00", end: "12:30" },
-  { id: 1, label: "Period 1", start: "12:00", end: "13:15" },
-  { id: 2, label: "Period 2", start: "13:20", end: "14:35" },
-  { id: 3, label: "Period 3", start: "14:40", end: "15:55" },
-  { id: 4, label: "Period 4", start: "16:00", end: "17:15" },
-  { id: 5, label: "Period 5", start: "17:20", end: "18:35" },
-  { id: 6, label: "Period 6", start: "18:40", end: "19:55" },
-  { id: 7, label: "Period 7", start: "20:00", end: "21:30" },
+  { id: 1, label: "Period 1", start: "08:00", end: "12:30" },
+  { id: 2, label: "Period 2", start: "12:00", end: "13:15" },
+  { id: 3, label: "Period 3", start: "13:20", end: "14:35" },
+  { id: 4, label: "Period 4", start: "14:40", end: "15:55" },
+  { id: 5, label: "Period 5", start: "16:00", end: "17:15" },
+  { id: 6, label: "Period 6", start: "17:20", end: "18:35" },
+  { id: 7, label: "Period 7", start: "18:40", end: "19:55" },
+  { id: 8, label: "Period 8", start: "20:00", end: "21:30" },
 ];
 
-// ── Color per course ──
-const COLORS = [
-  "#3B82F6", "#10B981", "#8B5CF6", "#F59E0B", "#EF4444",
-  "#06B6D4", "#EC4899", "#14B8A6", "#F97316", "#6366F1",
-];
-
-export function getCourseColor(courseId: string): string {
-  let h = 0;
-  for (let i = 0; i < courseId.length; i++) {
-    h = ((h << 5) - h) + courseId.charCodeAt(i);
-    h |= 0;
+export function getClassColor(classType: string): string {
+  switch (classType) {
+    case "LAB": return "#8B5CF6"; // Purple
+    case "ONLINE_SESSION": return "#10B981"; // Emerald
+    case "MAKEUP_CLASS": return "#F59E0B"; // Amber
+    case "LECTURE":
+    default:
+      return "#3B82F6"; // Blue
   }
-  return COLORS[Math.abs(h) % COLORS.length];
 }
 
 // ── Map a Date to a Day ──
@@ -66,21 +62,32 @@ export function getEventPeriodId(d: Date): number | null {
   return null;
 }
 
-// ── Build start/end Date for a Day + Period ──
-export function buildEventDates(day: Day, periodId: number): { start: Date; end: Date } {
-  const dayIdx: Record<Day, number> = { Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6, Sunday: 0 };
+// ── Date Computations for Weekly Grid ──
+export function getWeekDates(weekOffset = 0): Record<Day, Date> {
+  const result = {} as Record<Day, Date>;
+  const date = new Date();
+  
+  // Find Monday of the current week
+  const day = date.getDay();
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1) + (weekOffset * 7);
+  const monday = new Date(date.setDate(diff));
+  
+  DAYS.forEach((d, i) => {
+    const dDate = new Date(monday);
+    dDate.setDate(monday.getDate() + i);
+    result[d] = dDate;
+  });
+  
+  return result;
+}
+
+export function buildEventDates(day: Day, periodId: number, weekOffset = 0): { start: Date; end: Date } {
   const period = PERIODS.find(p => p.id === periodId)!;
   const [sh, sm] = period.start.split(":").map(Number);
   const [eh, em] = period.end.split(":").map(Number);
 
-  const today = new Date();
-  const todayDay = today.getDay();
-  const target = dayIdx[day];
-  let diff = target - todayDay;
-  if (diff <= 0) diff += 7;
-
-  const date = new Date(today);
-  date.setDate(today.getDate() + diff);
+  const dates = getWeekDates(weekOffset);
+  const date = dates[day];
 
   const start = new Date(date);
   start.setHours(sh, sm, 0, 0);

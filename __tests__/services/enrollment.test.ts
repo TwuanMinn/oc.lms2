@@ -71,9 +71,9 @@ describe("enrollment.service", () => {
       const mockDb = (await import("@/server/db")).db;
       vi.mocked(mockDb.select).mockReturnValueOnce({
         from: vi.fn(() => ({
-          where: vi.fn(() => enrollmentEmpty),
+          where: vi.fn(() => enrollmentEmpty as any),
         })),
-      } as any);
+      } as unknown as ReturnType<typeof mockDb.select>);
 
       const { unenroll } = await import("@/server/services/enrollment.service");
       await expect(unenroll("user-1", "course-1")).rejects.toThrow(

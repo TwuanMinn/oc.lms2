@@ -18,10 +18,21 @@ export async function createClassSession(input: {
   scheduledAt: string;
   group?: string;
 }) {
+  // Look up by courseCode first (unique identifier), then by title as fallback
   let [course] = await db
     .select()
     .from(courses)
-    .where(eq(courses.title, input.courseName));
+    .where(eq(courses.courseCode, input.classCode));
+
+  if (!course) {
+    // Fallback: check by title + group combo to avoid accidental duplicates
+    const titleMatches = await db
+      .select()
+      .from(courses)
+      .where(eq(courses.title, input.courseName));
+    const groupMatch = titleMatches.find(c => (c.group || null) === (input.group || null));
+    if (groupMatch) course = groupMatch;
+  }
 
   if (!course) {
     const slug =
@@ -37,12 +48,21 @@ export async function createClassSession(input: {
       .values({
         title: input.courseName,
         slug,
+        courseCode: input.classCode,
         teacherId: input.teacherId,
         group: input.group || null,
         status: "PUBLISHED",
         approved: true,
       })
       .returning();
+  } else {
+    // Backfill courseCode/group on existing course if missing
+    const updates: Record<string, unknown> = {};
+    if (!course.courseCode) updates.courseCode = input.classCode;
+    if (!course.group && input.group) updates.group = input.group;
+    if (Object.keys(updates).length > 0) {
+      [course] = await db.update(courses).set(updates).where(eq(courses.id, course.id)).returning();
+    }
   }
 
   const [session] = await db
@@ -126,11 +146,21 @@ export async function batchCreateSessions(input: {
   startDate: string;
   group?: string;
 }) {
-  // Find or create the course
+  // Look up by courseCode first (unique identifier), then by title as fallback
   let [course] = await db
     .select()
     .from(courses)
-    .where(eq(courses.title, input.courseName));
+    .where(eq(courses.courseCode, input.classCode));
+
+  if (!course) {
+    // Fallback: check by title + group combo to avoid accidental duplicates
+    const titleMatches = await db
+      .select()
+      .from(courses)
+      .where(eq(courses.title, input.courseName));
+    const groupMatch = titleMatches.find(c => (c.group || null) === (input.group || null));
+    if (groupMatch) course = groupMatch;
+  }
 
   if (!course) {
     const slug =
@@ -146,12 +176,21 @@ export async function batchCreateSessions(input: {
       .values({
         title: input.courseName,
         slug,
+        courseCode: input.classCode,
         teacherId: input.teacherId,
         group: input.group || null,
         status: "PUBLISHED",
         approved: true,
       })
       .returning();
+  } else {
+    // Backfill courseCode/group on existing course if missing
+    const updates: Record<string, unknown> = {};
+    if (!course.courseCode) updates.courseCode = input.classCode;
+    if (!course.group && input.group) updates.group = input.group;
+    if (Object.keys(updates).length > 0) {
+      [course] = await db.update(courses).set(updates).where(eq(courses.id, course.id)).returning();
+    }
   }
 
   const sessions = [];

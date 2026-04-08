@@ -14,6 +14,16 @@ import { AnimatedPage, StaggerGrid, StaggerItem, AnimatedShimmerButton } from "@
 import { springBounce } from "@/lib/motion";
 import { formatDate } from "@/lib/utils";
 
+interface EnrolledCourse {
+  enrollmentId: string;
+  courseId: string;
+  courseSlug: string | null;
+  courseTitle: string | null;
+  enrolledAt: string | Date;
+  completedAt: string | Date | null;
+  progressPercent: number | null;
+}
+
 export default function StudentCoursesPage() {
   const {
     data: enrolledCourses,
@@ -49,7 +59,7 @@ export default function StudentCoursesPage() {
                 />
               ) : enrolledCourses && enrolledCourses.length > 0 ? (
                 <StaggerGrid className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-                  {enrolledCourses.map((e) => (
+                  {(enrolledCourses as EnrolledCourse[]).map((e) => (
                     <StaggerItem key={e.enrollmentId} scale>
                       <Link href={`/courses/${e.courseSlug ?? e.courseId}`}>
                         <motion.div

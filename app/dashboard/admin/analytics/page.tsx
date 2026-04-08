@@ -1,5 +1,7 @@
 "use client";
 
+import { Suspense } from "react";
+
 import { trpc } from "@/lib/trpc/client";
 import { Navbar } from "@/components/layout/Navbar";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -17,22 +19,8 @@ import {
 import { motion } from "motion/react";
 import { AnimatedPage } from "@/components/ui/animated";
 
-export default function AdminAnalyticsPage() {
-  const { data, isLoading } = trpc.admin.getAnalytics.useQuery();
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
-        <div className="flex">
-          <Sidebar role="ADMIN" />
-          <main className="flex flex-1 items-center justify-center p-6">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </main>
-        </div>
-      </div>
-    );
-  }
+function AdminAnalyticsContent() {
+  const [data] = trpc.admin.getAnalytics.useSuspenseQuery();
 
   const chartData =
     data?.enrollmentsByDay?.map((d: { date: string; count: number }) => ({
@@ -45,12 +33,7 @@ export default function AdminAnalyticsPage() {
     : 0;
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
-      <div className="flex">
-        <Sidebar role="ADMIN" />
-        <main className="flex-1 p-6 lg:p-8 2xl:p-10 overflow-hidden">
-          <AnimatedPage>
+    <AnimatedPage>
             <PageHeader
               title="Platform Analytics"
               description="Real-time breakdown of growth and engagement"
@@ -169,7 +152,7 @@ export default function AdminAnalyticsPage() {
                   <Award className="h-4 w-4 text-amber-500" /> Leaderboard
                 </h3>
                 <div className="flex-1 space-y-4">
-                  {data?.topCourses?.slice(0, 5).map((course, idx: number) => (
+                  {((data?.topCourses as Array<{ courseId: string; title: string; enrollmentCount: number }>) ?? []).slice(0, 5).map((course, idx: number) => (
                     <div key={course.courseId} className="flex items-center gap-3">
                       <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${
                         idx === 0 ? "bg-amber-500/20 text-amber-500" :
@@ -192,6 +175,25 @@ export default function AdminAnalyticsPage() {
 
             </div>
           </AnimatedPage>
+  );
+}
+
+export default function AdminAnalyticsPage() {
+  return (
+    <div className="min-h-screen bg-background">
+      <Navbar />
+      <div className="flex">
+        <Sidebar role="ADMIN" />
+        <main className="flex-1 p-6 lg:p-8 2xl:p-10 overflow-hidden">
+          <Suspense
+            fallback={
+              <div className="flex flex-1 items-center justify-center h-[60vh]">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            }
+          >
+            <AdminAnalyticsContent />
+          </Suspense>
         </main>
       </div>
     </div>
