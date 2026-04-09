@@ -541,7 +541,7 @@ export async function getSessionMaterials(sessionId: string) {
 
 export async function addMaterial(input: {
   sessionId: string;
-  type: "ASSIGNMENT" | "PDF" | "LINK";
+  type: "ASSIGNMENT" | "PDF" | "LINK" | "EXAM";
   title: string;
   description?: string;
   url?: string;

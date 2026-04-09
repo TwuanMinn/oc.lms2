@@ -32,9 +32,12 @@ import {
   MessageSquare,
   ArrowLeft,
   Download,
+  ClipboardCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import ExamBuilder from "@/components/exam/ExamBuilder";
+import type { ExamData } from "@/components/exam/ExamBuilder";
 
 type Tab = "settings" | "curriculum" | "students" | "attendance" | "schedule";
 type AttendanceStatus = "PRESENT" | "LATE" | "ABSENT" | "LEAVE";
@@ -196,7 +199,7 @@ function CurriculumTab({ courseId }: { courseId: string }) {
       </div>
 
       {sessions.map((session, i) => (
-        <WeekCard key={session.id} session={session} index={i} />
+        <WeekCard key={session.id} session={session} index={i} courseId={courseId} />
       ))}
     </div>
   );
@@ -216,15 +219,17 @@ const materialIcons = {
   ASSIGNMENT: BookOpen,
   PDF: FileText,
   LINK: LinkIcon,
+  EXAM: ClipboardCheck,
 };
 
 const materialColors = {
   ASSIGNMENT: "text-blue-500 bg-blue-500/10",
   PDF: "text-red-500 bg-red-500/10",
   LINK: "text-emerald-500 bg-emerald-500/10",
+  EXAM: "text-violet-500 bg-violet-500/10",
 };
 
-function WeekCard({ session, index }: { session: SessionData; index: number }) {
+function WeekCard({ session, index, courseId }: { session: SessionData; index: number; courseId: string }) {
   const [expanded, setExpanded] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -255,30 +260,73 @@ function WeekCard({ session, index }: { session: SessionData; index: number }) {
     onError: (err) => toast.error(err.message),
   });
 
-  const [matType, setMatType] = useState<"ASSIGNMENT" | "PDF" | "LINK">("ASSIGNMENT");
+  const [matType, setMatType] = useState<"ASSIGNMENT" | "EXAM" | "LINK">("ASSIGNMENT");
   const [matTitle, setMatTitle] = useState("");
   const [matDescription, setMatDescription] = useState("");
   const [matUrl, setMatUrl] = useState("");
   const [matDueDate, setMatDueDate] = useState("");
+  const [matFile, setMatFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   function resetForm() {
     setMatType("ASSIGNMENT");
+    setExamData(null);
     setMatTitle("");
     setMatDescription("");
     setMatUrl("");
     setMatDueDate("");
+    setMatFile(null);
   }
 
-  function handleAdd(e: React.FormEvent) {
+  async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     if (!matTitle) return;
+
+    let finalUrl = matUrl;
+
+    if (matFile) {
+      setIsUploading(true);
+      const formData = new FormData();
+      formData.append("file", matFile);
+      try {
+        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.url) {
+          finalUrl = data.url;
+        } else {
+          toast.error(data.error || "Upload failed");
+          setIsUploading(false);
+          return;
+        }
+      } catch (err) {
+        toast.error("File upload failed");
+        setIsUploading(false);
+        return;
+      }
+      setIsUploading(false);
+    }
+
     addMaterial.mutate({
       sessionId: session.id,
       type: matType,
       title: matTitle,
       description: matDescription || undefined,
-      url: matUrl || undefined,
+      url: finalUrl || undefined,
       dueDate: matDueDate || undefined,
+    });
+  }
+
+  const [examData, setExamData] = useState<ExamData | null>(null);
+
+  function handleExamSave(data: ExamData, asDraft: boolean) {
+    setExamData(data);
+    addMaterial.mutate({
+      sessionId: session.id,
+      type: "EXAM",
+      title: data.settings.title,
+      description: data.settings.description || (asDraft ? "[DRAFT]" : undefined),
+      url: undefined,
+      dueDate: data.settings.endDate || undefined,
     });
   }
 
@@ -337,7 +385,7 @@ function WeekCard({ session, index }: { session: SessionData; index: number }) {
             <motion.form initial={{ opacity: 0 }} animate={{ opacity: 1 }} onSubmit={handleAdd}
               className="border-b border-border/30 p-5 space-y-3 bg-muted/5">
               <div className="flex gap-2">
-                {(["ASSIGNMENT", "PDF", "LINK"] as const).map((t) => {
+                {(["ASSIGNMENT", "EXAM", "LINK"] as const).map((t) => {
                   const Icon = materialIcons[t];
                   return (
                     <button key={t} type="button" onClick={() => setMatType(t)}
@@ -345,40 +393,60 @@ function WeekCard({ session, index }: { session: SessionData; index: number }) {
                         matType === t ? "border-primary bg-primary/10 text-primary" : "border-border/50 bg-background text-muted-foreground hover:bg-accent"
                       }`}>
                       <Icon className="h-3.5 w-3.5" />
-                      {t === "PDF" ? "PDF / File" : t === "LINK" ? "Link" : "Assignment"}
+                      {t === "EXAM" ? "Exam" : t === "LINK" ? "Link" : "Assignment"}
                     </button>
                   );
                 })}
               </div>
 
-              <input type="text" value={matTitle} onChange={(e) => setMatTitle(e.target.value)} placeholder="Title" required
-                className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" />
-
-              <textarea value={matDescription} onChange={(e) => setMatDescription(e.target.value)} placeholder="Description (optional)" rows={2}
-                className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none resize-none" />
-
-              {(matType === "PDF" || matType === "LINK") && (
-                <input type="url" value={matUrl} onChange={(e) => setMatUrl(e.target.value)}
-                  placeholder={matType === "PDF" ? "PDF link URL" : "External link URL"}
-                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" />
-              )}
-
-              {matType === "ASSIGNMENT" && (
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground mb-1">Due Date (optional)</label>
-                  <input type="datetime-local" value={matDueDate} onChange={(e) => setMatDueDate(e.target.value)}
+              {/* ── Exam tab shows full ExamBuilder instead of simple form ── */}
+              {matType === "EXAM" ? (
+                <ExamBuilder onSave={handleExamSave} isPending={addMaterial.isPending} />
+              ) : (
+                <>
+                  <input type="text" value={matTitle} onChange={(e) => setMatTitle(e.target.value)} placeholder="Title" required
                     className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" />
-                </div>
-              )}
 
-              <div className="flex justify-end">
-                <button type="submit" disabled={addMaterial.isPending}
-                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-semibold text-primary-foreground shadow-sm disabled:opacity-50">
-                  {addMaterial.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                  Add
-                </button>
-              </div>
-              {addMaterial.error && <p className="text-xs text-red-500">{addMaterial.error.message}</p>}
+                  <textarea value={matDescription} onChange={(e) => setMatDescription(e.target.value)} placeholder="Description (optional)" rows={2}
+                    className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none resize-none" />
+
+                  {matType === "LINK" && (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-semibold text-muted-foreground">External Link URL</label>
+                      <input type="url" value={matUrl} onChange={(e) => setMatUrl(e.target.value)}
+                        placeholder="External link URL"
+                        className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" />
+                    </div>
+                  )}
+
+                  {matType === "ASSIGNMENT" && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground mb-1">Due Date (optional)</label>
+                        <input type="datetime-local" value={matDueDate} onChange={(e) => setMatDueDate(e.target.value)}
+                          className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground mb-1">Instruction File (optional)</label>
+                        <input 
+                          type="file" 
+                          onChange={(e) => setMatFile(e.target.files?.[0] || null)}
+                          className="w-full rounded-xl border border-border/60 bg-background px-4 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none file:mr-4 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-[10px] file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20" 
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end">
+                    <button type="submit" disabled={addMaterial.isPending || isUploading}
+                      className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-semibold text-primary-foreground shadow-sm disabled:opacity-50">
+                      {addMaterial.isPending || isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                      {isUploading ? "Uploading..." : "Add"}
+                    </button>
+                  </div>
+                  {addMaterial.error && <p className="text-xs text-red-500">{addMaterial.error.message}</p>}
+                </>
+              )}
             </motion.form>
           )}
 
@@ -405,15 +473,26 @@ function WeekCard({ session, index }: { session: SessionData; index: number }) {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-semibold truncate">{mat.title}</p>
-                        <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground uppercase">{mat.type}</span>
+                        <span className={cn(
+                          "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase",
+                          mat.type === "EXAM" ? "bg-violet-500/10 text-violet-600" : "bg-muted text-muted-foreground"
+                        )}>{mat.type}</span>
                       </div>
                       {mat.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{mat.description}</p>}
                       <div className="flex items-center gap-3 mt-1">
-                        {mat.url && (
+                        {mat.type === "ASSIGNMENT" ? (
+                          <a href={`/teacher/courses/${courseId}/weeks/${session.id}/assignments/${mat.id}`} className="text-xs text-primary hover:underline flex items-center gap-1">
+                            <LinkIcon className="h-3 w-3" />Open link
+                          </a>
+                        ) : mat.type === "EXAM" ? (
+                          <a href={`/teacher/courses/${courseId}/weeks/${session.id}/exams/${mat.id}`} className="text-xs text-primary hover:underline flex items-center gap-1">
+                            <LinkIcon className="h-3 w-3" />Open link
+                          </a>
+                        ) : mat.url ? (
                           <a href={mat.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
                             <LinkIcon className="h-3 w-3" />Open link
                           </a>
-                        )}
+                        ) : null}
                         {mat.dueDate && (
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
                             <Clock className="h-3 w-3" />Due: {formatDate(mat.dueDate)}

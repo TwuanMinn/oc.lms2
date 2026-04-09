@@ -8,7 +8,7 @@ import { Breadcrumbs } from "@/components/shared/Breadcrumbs";
 import { RatingStars } from "@/components/course/RatingStars";
 import { ReviewSection } from "@/components/course/ReviewSection";
 import { formatDuration, formatDate } from "@/lib/utils";
-import { Clock, Users, BookOpen, PlayCircle, Lock, Loader2, ChevronDown } from "lucide-react";
+import { Clock, Users, BookOpen, PlayCircle, Lock, Loader2, ChevronDown, Calendar, FileText, ChevronLeft, Link as LinkIcon } from "lucide-react";
 import Image from "next/image";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "motion/react";
@@ -134,12 +134,20 @@ export default function CourseDetailPage() {
       <AnimatedPage>
         {/* Breadcrumbs */}
         <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6">
-          <Breadcrumbs
-            items={[
-              { label: "Courses", href: "/courses" },
-              { label: course.title },
-            ]}
-          />
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => router.back()}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <Breadcrumbs
+              items={[
+                { label: "Courses", href: "/courses" },
+                { label: course.title },
+              ]}
+            />
+          </div>
         </div>
 
         {/* ─── Immersive Hero ─── */}
@@ -399,6 +407,108 @@ export default function CourseDetailPage() {
                   );
                 })}
               </div>
+
+              {(course.sessions?.length ?? 0) > 0 && (
+                <div className="mt-8">
+                  <ScrollReveal delay={0.1}>
+                    <h2 className="text-xl font-bold">Live Classes & Materials</h2>
+                  </ScrollReveal>
+                  <div className="mt-4 space-y-3">
+                    {course.sessions?.map((session, sIndex) => {
+                      const isExpanded = expandedModules.has(session.id);
+                      return (
+                        <ScrollReveal key={session.id} delay={sIndex * 0.05}>
+                          <div className="overflow-hidden rounded-xl border border-border/50 bg-card">
+                            <button
+                              onClick={() => toggleModule(session.id)}
+                              className="flex w-full cursor-pointer items-center justify-between px-4 py-3 transition-colors hover:bg-accent/30"
+                            >
+                              <div className="flex flex-col items-start gap-1">
+                                <div className="flex items-center gap-2">
+                                  <Calendar className="h-4 w-4 text-primary" />
+                                  <h3 className="text-sm font-semibold">{session.title}</h3>
+                                </div>
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-widest pl-6">
+                                  {new Date(session.scheduledAt).toLocaleDateString("en-US", { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">
+                                  {session.materials.length} items
+                                </span>
+                                <motion.span
+                                  animate={{ rotate: isExpanded ? 180 : 0 }}
+                                  transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                                >
+                                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                </motion.span>
+                              </div>
+                            </button>
+                            <AnimatePresence initial={false}>
+                              {isExpanded && (
+                                <motion.div
+                                  variants={collapseVariants}
+                                  initial="hidden"
+                                  animate="visible"
+                                  exit="exit"
+                                  className="overflow-hidden"
+                                >
+                                  <div className="divide-y divide-border/30 border-t border-border/30">
+                                    {session.materials.length === 0 ? (
+                                      <div className="px-4 py-3 text-xs text-muted-foreground italic">No materials added yet.</div>
+                                    ) : (
+                                      session.materials.map((mat, mIndex) => (
+                                        <motion.div
+                                          key={mat.id}
+                                          initial={{ opacity: 0, x: -8 }}
+                                          animate={{ opacity: 1, x: 0 }}
+                                          transition={{
+                                            delay: mIndex * 0.04,
+                                            type: "spring",
+                                            stiffness: 260,
+                                            damping: 20,
+                                          }}
+                                          className="flex items-center justify-between px-4 py-2.5 transition-colors hover:bg-accent/20"
+                                        >
+                                          <div className="flex items-center gap-3">
+                                            {mat.type === "ASSIGNMENT" ? <BookOpen className="h-4 w-4 text-primary" /> : mat.type === "EXAM" ? <FileText className="h-4 w-4 text-violet-500" /> : mat.type === "PDF" ? <FileText className="h-4 w-4 text-red-500" /> : <LinkIcon className="h-4 w-4 text-blue-500" />}
+                                            {course.isEnrolled ? (
+                                              mat.type === "ASSIGNMENT" ? (
+                                                <a href={`/student/courses/${course.slug}/weeks/${session.id}/assignments/${mat.id}`} className="text-sm hover:underline text-foreground flex items-center gap-2">
+                                                  {mat.title} <span className="text-[10px] bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded font-bold uppercase">Assignment</span>
+                                                </a>
+                                              ) : mat.type === "EXAM" ? (
+                                                <a href={`/student/courses/${course.slug}/weeks/${session.id}/exams/${mat.id}`} className="text-sm hover:underline text-foreground flex items-center gap-2">
+                                                  {mat.title} <span className="text-[10px] bg-violet-500/10 text-violet-600 px-1.5 py-0.5 rounded font-bold uppercase">Exam</span>
+                                                </a>
+                                              ) : (
+                                                <a href={mat.url ?? "#"} target="_blank" rel="noreferrer" className="text-sm hover:underline text-foreground">
+                                                  {mat.title}
+                                                </a>
+                                              )
+                                            ) : (
+                                              <span className="text-sm text-foreground flex items-center gap-2">
+                                                {mat.title}
+                                                {mat.type === "ASSIGNMENT" && <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-bold uppercase">Assignment</span>}
+                                                {mat.type === "EXAM" && <span className="text-[10px] bg-violet-500/10 text-violet-600 px-1.5 py-0.5 rounded font-bold uppercase">Exam</span>}
+                                              </span>
+                                            )}
+                                          </div>
+                                          {!course.isEnrolled && <Lock className="h-4 w-4 text-muted-foreground" />}
+                                        </motion.div>
+                                      ))
+                                    )}
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                        </ScrollReveal>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               <ScrollReveal delay={0.2}>
                 <div className="mt-12">

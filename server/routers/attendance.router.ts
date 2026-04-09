@@ -117,7 +117,7 @@ export const attendanceRouter = router({
     .input(
       z.object({
         sessionId: z.string().uuid(),
-        type: z.enum(["ASSIGNMENT", "PDF", "LINK"]),
+        type: z.enum(["ASSIGNMENT", "PDF", "LINK", "EXAM"]),
         title: z.string().min(1),
         description: z.string().optional(),
         url: z.string().optional(),

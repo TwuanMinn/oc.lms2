@@ -1,11 +1,12 @@
 import "server-only";
 import { TRPCError } from "@trpc/server";
-import { eq, and, isNull, desc, asc, sql, ilike, count } from "drizzle-orm";
+import { eq, and, isNull, desc, asc, sql, ilike, count, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { courses, categories, modules, lessons } from "@/server/db/schema/courses";
 import { enrollments } from "@/server/db/schema/learning";
 import { reviews } from "@/server/db/schema/social";
 import { users } from "@/server/db/schema/users";
+import { classeSessions, weekMaterials } from "@/server/db/schema/attendance";
 import { slugify } from "@/lib/utils";
 import type { CreateCourseInput, UpdateCourseInput, CourseListInput } from "@/lib/validations/course";
 
@@ -216,7 +217,7 @@ export async function getCourseBySlug(slug: string, userId?: string) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Course not found" });
   }
 
-  const [courseModules, avgRatingResult, enrollmentCountResult, isEnrolled] =
+  const [courseModules, avgRatingResult, enrollmentCountResult, isEnrolled, courseSessionsResult] =
     await Promise.all([
       db
         .select({
@@ -246,6 +247,16 @@ export async function getCourseBySlug(slug: string, userId?: string) {
               )
             )
         : Promise.resolve([]),
+      db
+        .select({
+          id: classeSessions.id,
+          title: classeSessions.title,
+          classCode: classeSessions.classCode,
+          scheduledAt: classeSessions.scheduledAt,
+        })
+        .from(classeSessions)
+        .where(eq(classeSessions.courseId, course.id))
+        .orderBy(asc(classeSessions.scheduledAt)),
     ]);
 
   // Fetch all lessons for this course in ONE query (fixes N+1)
@@ -275,9 +286,39 @@ export async function getCourseBySlug(slug: string, userId?: string) {
     lessons: lessonsByModule.get(mod.id) ?? [],
   }));
 
+  // Fetch materials for all sessions of this course
+  const sessionIds = courseSessionsResult.map((s) => s.id);
+  const allMaterials = sessionIds.length > 0
+    ? await db
+        .select({
+          id: weekMaterials.id,
+          sessionId: weekMaterials.sessionId,
+          title: weekMaterials.title,
+          type: weekMaterials.type,
+          url: weekMaterials.url,
+          position: weekMaterials.position,
+        })
+        .from(weekMaterials)
+        .where(inArray(weekMaterials.sessionId, sessionIds))
+        .orderBy(asc(weekMaterials.position))
+    : [];
+
+  const materialsBySession = new Map<string, typeof allMaterials>();
+  for (const mat of allMaterials) {
+    const existing = materialsBySession.get(mat.sessionId) ?? [];
+    existing.push(mat);
+    materialsBySession.set(mat.sessionId, existing);
+  }
+
+  const sessionsWithMaterials = courseSessionsResult.map((session) => ({
+    ...session,
+    materials: materialsBySession.get(session.id) ?? [],
+  }));
+
   return {
     ...course,
     modules: modulesWithLessons,
+    sessions: sessionsWithMaterials,
     avgRating: Number(avgRatingResult[0]?.avg ?? 0),
     enrollmentCount: enrollmentCountResult[0]?.count ?? 0,
     isEnrolled: isEnrolled.length > 0,

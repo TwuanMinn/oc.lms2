@@ -23,6 +23,7 @@ export const materialTypeEnum = pgEnum("material_type", [
   "ASSIGNMENT",
   "PDF",
   "LINK",
+  "EXAM",
 ]);
 
 // A scheduled class session created by admin
