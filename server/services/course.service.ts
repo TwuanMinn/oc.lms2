@@ -142,16 +142,31 @@ export async function getCatalog(input: CourseListInput) {
     );
   }
 
+  // Aggregated subqueries — computed once per course instead of per-row
+  const reviewAgg = db
+    .select({
+      courseId: reviews.courseId,
+      avgRating: sql<number>`coalesce(avg(${reviews.rating}), 0)`.as("avg_rating"),
+    })
+    .from(reviews)
+    .groupBy(reviews.courseId)
+    .as("review_agg");
+
+  const enrollmentAgg = db
+    .select({
+      courseId: enrollments.courseId,
+      enrollmentCount: sql<number>`count(*)`.as("enrollment_count"),
+    })
+    .from(enrollments)
+    .groupBy(enrollments.courseId)
+    .as("enrollment_agg");
+
   const orderBy =
     input.sort === "newest"
       ? desc(courses.createdAt)
       : input.sort === "popular"
-        ? desc(
-            sql`(SELECT count(*) FROM enrollments WHERE enrollments.course_id = courses.id)`
-          )
-        : desc(
-            sql`(SELECT coalesce(avg(rating), 0) FROM reviews WHERE reviews.course_id = courses.id)`
-          );
+        ? desc(sql`coalesce(${enrollmentAgg.enrollmentCount}, 0)`)
+        : desc(sql`coalesce(${reviewAgg.avgRating}, 0)`);
 
   const [courseList, totalResult] = await Promise.all([
     db
@@ -168,12 +183,14 @@ export async function getCatalog(input: CourseListInput) {
         categoryName: categories.name,
         categorySlug: categories.slug,
         createdAt: courses.createdAt,
-        avgRating: sql<number>`coalesce((SELECT avg(rating) FROM reviews WHERE reviews.course_id = courses.id), 0)`,
-        enrollmentCount: sql<number>`(SELECT count(*) FROM enrollments WHERE enrollments.course_id = courses.id)`,
+        avgRating: sql<number>`coalesce(${reviewAgg.avgRating}, 0)`,
+        enrollmentCount: sql<number>`coalesce(${enrollmentAgg.enrollmentCount}, 0)`,
       })
       .from(courses)
       .leftJoin(users, eq(courses.teacherId, users.id))
       .leftJoin(categories, eq(courses.categoryId, categories.id))
+      .leftJoin(reviewAgg, eq(reviewAgg.courseId, courses.id))
+      .leftJoin(enrollmentAgg, eq(enrollmentAgg.courseId, courses.id))
       .where(and(...conditions))
       .orderBy(orderBy)
       .limit(input.limit)

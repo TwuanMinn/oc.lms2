@@ -35,7 +35,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${firaCode.variable} ${firaSans.variable} font-sans antialiased`}>
+      <body className={`${inter.variable} ${firaCode.variable} ${firaSans.variable} font-sans antialiased`} suppressHydrationWarning>
         <ThemeProvider>
           <TRPCProvider>
             {children}

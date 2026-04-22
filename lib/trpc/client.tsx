@@ -21,8 +21,11 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 1000 * 60 * 5,
+            staleTime: 1000 * 60,
+            gcTime: 1000 * 60 * 10,
             refetchOnWindowFocus: false,
+            retry: 1,
+            refetchOnReconnect: "always",
           },
         },
       })
@@ -34,6 +37,7 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
         httpBatchLink({
           url: `${getBaseUrl()}/api/trpc`,
           transformer: superjson,
+          maxURLLength: 2048,
         }),
       ],
     })
@@ -45,3 +49,4 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
     </trpc.Provider>
   );
 }
+

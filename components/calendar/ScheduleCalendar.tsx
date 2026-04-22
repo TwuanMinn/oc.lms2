@@ -407,18 +407,8 @@ export default function ScheduleCalendar({ role }: { role?: string }) {
                     <button onClick={exportPDF} className="tt-btn-secondary h-[42px]">
                       <Download className="w-4 h-4" /> Export
                     </button>
-                    <button onClick={() => openAdd()} className="tt-btn-primary h-[42px]">
-                      <Plus className="w-4 h-4" /> Add Slot
-                    </button>
                   </div>
                 </div>
-                {formMode && (
-                  <div className="animate-slideDown">
-                    <SlotForm formData={formData} setFormData={setFormData} courses={coursesQ.data || []}
-                      mode={formMode} onSave={saveSlot} onDelete={deleteSlot} onCancel={() => setFormMode(null)}
-                      loading={createM.isPending || updateM.isPending || deleteM.isPending} />
-                  </div>
-                )}
                 <TimetableGrid cells={filteredCells} onCellClick={openEdit} onEmptyClick={() => {}} interactive weekOffset={weekOffset} now={now} />
               </div>
             )}

@@ -91,7 +91,6 @@ const adminSections: NavSection[] = [
       { label: "Users", href: "/dashboard/admin/users", icon: Users },
       { label: "Classes", href: "/dashboard/admin/classes", icon: ClipboardList },
       { label: "Attendance", href: "/dashboard/admin/attendance", icon: BarChart3 },
-      { label: "Schedule", href: "/dashboard/admin/schedule", icon: CalendarDays },
       { label: "Announcements", href: "/dashboard/admin/announcements", icon: Megaphone },
     ],
   },

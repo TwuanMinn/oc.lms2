@@ -6,10 +6,7 @@ import { Navbar } from "@/components/layout/Navbar";
 import { motion } from "motion/react";
 import { Award, Download, Calendar, Hash, BookOpen, Linkedin } from "lucide-react";
 import { AnimatedPage } from "@/components/ui/animated";
-import { jsPDF } from "jspdf";
-import { toPng } from "html-to-image";
 import { useState, useEffect } from "react";
-import confetti from "canvas-confetti";
 
 function CertificateSkeleton() {
   return (
@@ -30,27 +27,35 @@ export default function CertificatePage() {
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
-    if (cert) {
+    if (!cert) return;
+    let interval: ReturnType<typeof setInterval> | undefined;
+    let cancelled = false;
+
+    (async () => {
+      const { default: confetti } = await import("canvas-confetti");
+      if (cancelled) return;
+
       const duration = 3 * 1000;
       const animationEnd = Date.now() + duration;
       const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
-
       const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
 
-      const interval: ReturnType<typeof setInterval> = setInterval(function() {
+      interval = setInterval(() => {
         const timeLeft = animationEnd - Date.now();
-
         if (timeLeft <= 0) {
-          return clearInterval(interval);
+          if (interval) clearInterval(interval);
+          return;
         }
-
         const particleCount = 50 * (timeLeft / duration);
-        confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } }));
-        confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } }));
+        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
+        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
       }, 250);
+    })();
 
-      return () => clearInterval(interval);
-    }
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
+    };
   }, [cert]);
 
   if (isLoading) return <CertificateSkeleton />;
@@ -77,6 +82,10 @@ export default function CertificatePage() {
 
     setIsGenerating(true);
     try {
+      const [{ toPng }, { jsPDF }] = await Promise.all([
+        import("html-to-image"),
+        import("jspdf"),
+      ]);
       const dataUrl = await toPng(certElement, { quality: 1, pixelRatio: 2 });
       const pdf = new jsPDF({
         orientation: "landscape",

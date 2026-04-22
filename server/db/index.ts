@@ -13,13 +13,14 @@ import * as attendance from "./schema/attendance";
 import * as schedules from "./schema/schedules";
 import * as announcements from "./schema/announcements";
 
-// Optimized for Supabase cloud DB
+// Optimized connection pool
 const client = postgres(env.DATABASE_URL, {
   prepare: false,
-  max: 10,
-  idle_timeout: 60,
-  connect_timeout: 30,
+  max: process.env.NODE_ENV === "production" ? 10 : 5,
+  idle_timeout: 20,
+  connect_timeout: 10,
   ssl: env.DATABASE_URL.includes("supabase.co") ? "require" : undefined,
+  onnotice: () => {},
 });
 
 export const db = drizzle(client, {

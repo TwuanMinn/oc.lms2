@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { formatDuration } from "@/lib/utils";
@@ -25,7 +26,7 @@ interface CourseCardProps {
   showProgress?: boolean;
 }
 
-export function CourseCard({
+export const CourseCard = memo(function CourseCard({
   slug,
   title,
   description,
@@ -112,4 +113,4 @@ export function CourseCard({
       </Link>
     </motion.div>
   );
-}
+});

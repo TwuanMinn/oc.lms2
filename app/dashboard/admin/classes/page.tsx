@@ -18,8 +18,18 @@ import {
   UserPlus,
   UserMinus,
   Search,
+  Calendar,
+  BookOpen,
 } from "lucide-react";
 import { useState, useMemo } from "react";
+import dynamic from "next/dynamic";
+import { type Day, DAYS, PERIODS, buildEventDates } from "@/components/calendar/timetable-data";
+import { toast } from "sonner";
+
+const ScheduleCalendar = dynamic(
+  () => import("@/components/calendar/ScheduleCalendar"),
+  { ssr: false }
+);
 
 interface SessionRow {
   id: string;
@@ -34,29 +44,57 @@ interface SessionRow {
   studentCount: number;
 }
 
+type ClassTab = "manage" | "schedule";
+
 export default function AdminClassesPage() {
+  const [activeTab, setActiveTab] = useState<ClassTab>("manage");
   const utils = trpc.useUtils();
   const { data, isLoading } = trpc.attendance.getSessions.useQuery({
     limit: 200,
     offset: 0,
   });
+
   const { data: usersData } = trpc.admin.getUsers.useQuery({
     limit: 100,
     offset: 0,
     role: "TEACHER",
   });
 
+  // Helper: fire schedule creation with a known courseId
+  function scheduleOnTimetable(courseId: string, courseTitle: string) {
+    const { start, end } = buildEventDates(formDay, formPeriodId);
+    const trimmedRoom = formRoom.trim();
+    const room = trimmedRoom ? (/^\d+$/.test(trimmedRoom) ? `Room ${trimmedRoom}` : trimmedRoom) : undefined;
+    createSchedule.mutate({
+      courseId,
+      title: courseTitle,
+      room,
+      classType: formClassType,
+      eventType: "LIVE_CLASS",
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+    });
+  }
+
   const createSession = trpc.attendance.createSession.useMutation({
-    onSuccess: () => {
+    onSuccess: async (data) => {
       utils.attendance.getSessions.invalidate();
+      // Schedule on timetable using the courseId from the created session
+      if (data?.courseId) {
+        scheduleOnTimetable(data.courseId, courseName);
+      }
       setShowForm(false);
       resetForm();
     },
   });
 
   const batchCreate = trpc.attendance.batchCreateSessions.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
       utils.attendance.getSessions.invalidate();
+      // Schedule on timetable using the courseId returned from batch create
+      if (data?.course?.id) {
+        scheduleOnTimetable(data.course.id, data.course.title);
+      }
       setShowForm(false);
       resetForm();
     },
@@ -77,14 +115,30 @@ export default function AdminClassesPage() {
   const [createMode, setCreateMode] = useState<"single" | "multi">("multi");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Group sessions by base class code (e.g. PM-098 from PM-098-W01)
+  // ── Schedule fields (incorporated into create form) ──
+  const [formDay, setFormDay] = useState<Day>("Monday");
+  const [formPeriodId, setFormPeriodId] = useState(1);
+  const [formRoom, setFormRoom] = useState("");
+  const [formClassType, setFormClassType] = useState<"LECTURE" | "LAB" | "MAKEUP_CLASS" | "ONLINE_SESSION">("LECTURE");
+
+  const coursesQ = trpc.schedule.allCourses.useQuery();
+
+  const createSchedule = trpc.schedule.create.useMutation({
+    onSuccess: () => {
+      toast.success("Scheduled on timetable ✓");
+      utils.schedule.getMySchedules.invalidate();
+      utils.schedule.allCourses.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Group sessions by base class code
   const groupedSessions = useMemo(() => {
     if (!data?.sessions) return [];
 
     const grouped: Record<string, { courseTitle: string; courseId: string; courseGroup: string | null; teacherName: string; baseCode: string; sessions: SessionRow[] }> = {};
 
     for (const s of data.sessions) {
-      // Extract base code: "PM-098-W01" → "PM-098", "CS101" → "CS101"
       const baseCode = s.classCode.replace(/-W\d+$/, "");
       if (!grouped[baseCode]) {
         grouped[baseCode] = {
@@ -99,7 +153,6 @@ export default function AdminClassesPage() {
       grouped[baseCode].sessions.push(s);
     }
 
-    // Sort each group's sessions by scheduledAt
     for (const g of Object.values(grouped)) {
       g.sessions.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
     }
@@ -107,7 +160,6 @@ export default function AdminClassesPage() {
     return Object.values(grouped);
   }, [data?.sessions]);
 
-  // Filter grouped sessions by search query
   const filteredSessions = useMemo(() => {
     if (!searchQuery.trim()) return groupedSessions;
     const q = searchQuery.toLowerCase();
@@ -127,6 +179,10 @@ export default function AdminClassesPage() {
     setScheduledAt("");
     setWeekCount(15);
     setGroup("");
+    setFormDay("Monday");
+    setFormPeriodId(1);
+    setFormRoom("");
+    setFormClassType("LECTURE");
   }
 
   function handleCreate(e: React.FormEvent) {
@@ -170,7 +226,52 @@ export default function AdminClassesPage() {
             title="Class Management"
             description={`${groupedSessions.length} course${groupedSessions.length !== 1 ? "s" : ""} · ${data?.total ?? 0} sessions`}
           />
-          <div className="flex items-center gap-3">
+        </div>
+
+        {/* ── Tab Switcher ── */}
+        <div className="mt-4 flex items-center gap-1 rounded-xl border border-border/50 bg-muted/30 p-1 w-fit">
+          <button
+            type="button"
+            onClick={() => setActiveTab("manage")}
+            className={`inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-all ${
+              activeTab === "manage"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-background/50"
+            }`}
+          >
+            <ClipboardList className="h-4 w-4" />
+            Manage Class
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("schedule")}
+            className={`inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-all ${
+              activeTab === "schedule"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-background/50"
+            }`}
+          >
+            <Calendar className="h-4 w-4" />
+            Schedule
+          </button>
+        </div>
+
+        {/* ── Schedule Tab ── */}
+        {activeTab === "schedule" && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25 }}
+            className="mt-4 -mx-6 -mb-6"
+          >
+            <ScheduleCalendar role="ADMIN" />
+          </motion.div>
+        )}
+
+        {/* ── Manage Class Tab ── */}
+        {activeTab === "manage" && (
+        <div className="mt-4">
+        <div className="flex items-center justify-end gap-3">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <input
@@ -200,9 +301,8 @@ export default function AdminClassesPage() {
               {showForm ? "Cancel" : "Create Class"}
             </motion.button>
           </div>
-        </div>
 
-        {/* Create Form */}
+        {/* ── Create Class Form ── */}
         {showForm && (
           <motion.form
             initial={{ opacity: 0, height: 0 }}
@@ -216,29 +316,13 @@ export default function AdminClassesPage() {
                 <ClipboardList className="h-5 w-5 text-primary" />
                 New Class
               </h3>
-
-              {/* Mode Toggle */}
               <div className="flex rounded-lg border border-border/50 overflow-hidden text-xs font-semibold">
-                <button
-                  type="button"
-                  onClick={() => setCreateMode("multi")}
-                  className={`px-3 py-1.5 transition-colors ${
-                    createMode === "multi"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-background text-muted-foreground hover:bg-accent"
-                  }`}
-                >
+                <button type="button" onClick={() => setCreateMode("multi")}
+                  className={`px-3 py-1.5 transition-colors ${createMode === "multi" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-accent"}`}>
                   Multiple Weeks
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setCreateMode("single")}
-                  className={`px-3 py-1.5 transition-colors ${
-                    createMode === "single"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-background text-muted-foreground hover:bg-accent"
-                  }`}
-                >
+                <button type="button" onClick={() => setCreateMode("single")}
+                  className={`px-3 py-1.5 transition-colors ${createMode === "single" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-accent"}`}>
                   Single Session
                 </button>
               </div>
@@ -246,83 +330,40 @@ export default function AdminClassesPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
-                  Class Code / ID
-                </label>
-                <input
-                  type="text"
-                  value={classCode}
-                  onChange={(e) => setClassCode(e.target.value)}
-                  placeholder="e.g. CS101"
-                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
-                  required
-                />
+                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Class Code / ID</label>
+                <input type="text" value={classCode} onChange={(e) => setClassCode(e.target.value)} placeholder="e.g. CS101"
+                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required />
                 {createMode === "multi" && (
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    Each week: {classCode || "CS101"}-W01, {classCode || "CS101"}-W02, ...
-                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-1">Each week: {classCode || "CS101"}-W01, {classCode || "CS101"}-W02, ...</p>
                 )}
               </div>
 
               {createMode === "single" ? (
                 <div>
-                  <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
-                    Session Title
-                  </label>
-                  <input
-                    type="text"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="e.g. Week 1 - Introduction"
-                    className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
-                    required
-                  />
+                  <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Session Title</label>
+                  <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Week 1 - Introduction"
+                    className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required />
                 </div>
               ) : (
                 <div>
-                  <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
-                    Number of Weeks
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={52}
-                    value={weekCount}
-                    onChange={(e) => setWeekCount(Number(e.target.value))}
-                    className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
-                    required
-                  />
+                  <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Number of Weeks</label>
+                  <input type="number" min={1} max={52} value={weekCount} onChange={(e) => setWeekCount(Number(e.target.value))}
+                    className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required />
                 </div>
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
-                  Course Name
-                </label>
-                <input
-                  type="text"
-                  value={courseName}
-                  onChange={(e) => setCourseName(e.target.value)}
-                  placeholder="e.g. Introduction to Programming"
-                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
-                  required
-                />
+                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Course Name</label>
+                <input type="text" value={courseName} onChange={(e) => setCourseName(e.target.value)} placeholder="e.g. Introduction to Programming"
+                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
-                  Assign Teacher
-                </label>
-                <select
-                  value={teacherId}
-                  onChange={(e) => setTeacherId(e.target.value)}
-                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
-                  required
-                >
+                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Assign Teacher</label>
+                <select value={teacherId} onChange={(e) => setTeacherId(e.target.value)}
+                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required>
                   <option value="">Select a teacher</option>
                   {usersData?.users?.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name} ({u.email})
-                    </option>
+                    <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
                   ))}
                 </select>
               </div>
@@ -330,52 +371,65 @@ export default function AdminClassesPage() {
                 <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
                   {createMode === "multi" ? "Start Date" : "Scheduled Date & Time"}
                 </label>
-                <input
-                  type="datetime-local"
-                  value={scheduledAt}
-                  onChange={(e) => setScheduledAt(e.target.value)}
-                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
-                  required
-                />
+                <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)}
+                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required />
                 {createMode === "multi" && (
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    Each subsequent week adds 7 days
-                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-1">Each subsequent week adds 7 days</p>
                 )}
               </div>
               <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
-                  Group / Section
-                </label>
-                <input
-                  type="text"
-                  value={group}
-                  onChange={(e) => setGroup(e.target.value)}
-                  placeholder="e.g. Group A, Section 1"
-                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
-                />
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  Optional — for organizing multiple sections
-                </p>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Group / Section</label>
+                <input type="text" value={group} onChange={(e) => setGroup(e.target.value)} placeholder="e.g. Group A, Section 1"
+                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" />
+                <p className="text-[10px] text-muted-foreground mt-1">Optional — for organizing multiple sections</p>
+              </div>
+            </div>
+
+            {/* ── Schedule Info (DAY, PERIOD, ROOM, TYPE) ── */}
+            <div className="border-t border-border/40 pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Calendar className="h-4 w-4 text-primary" />
+                <h4 className="text-sm font-bold text-foreground">Schedule Info</h4>
+                <span className="text-[10px] text-muted-foreground ml-1">(optional — adds to timetable)</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-muted-foreground mb-1.5 uppercase tracking-wider">Day</label>
+                  <select value={formDay} onChange={(e) => setFormDay(e.target.value as Day)}
+                    className="w-full rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all">
+                    {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-muted-foreground mb-1.5 uppercase tracking-wider">Period</label>
+                  <select value={formPeriodId} onChange={(e) => setFormPeriodId(Number(e.target.value))}
+                    className="w-full rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all">
+                    {PERIODS.map(p => <option key={p.id} value={p.id}>{p.label} ({p.start})</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-muted-foreground mb-1.5 uppercase tracking-wider">Room</label>
+                  <input type="text" value={formRoom} onChange={(e) => setFormRoom(e.target.value)} placeholder="e.g. Room 101"
+                    className="w-full rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all placeholder:text-muted-foreground/50" />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-muted-foreground mb-1.5 uppercase tracking-wider">Type</label>
+                  <select value={formClassType} onChange={(e) => setFormClassType(e.target.value as typeof formClassType)}
+                    className="w-full rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all">
+                    <option value="LECTURE">Lecture</option>
+                    <option value="LAB">Lab</option>
+                    <option value="MAKEUP_CLASS">Make-up Class</option>
+                    <option value="ONLINE_SESSION">Online Session</option>
+                  </select>
+                </div>
               </div>
             </div>
 
             <div className="flex justify-end pt-2">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                type="submit"
-                disabled={isPending}
-                className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 disabled:opacity-50"
-              >
-                {isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Plus className="h-4 w-4" />
-                )}
-                {createMode === "multi"
-                  ? `Create ${weekCount} Week${weekCount > 1 ? "s" : ""}`
-                  : "Create Session"}
+              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} type="submit" disabled={isPending}
+                className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 disabled:opacity-50">
+                {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {createMode === "multi" ? `Create ${weekCount} Week${weekCount > 1 ? "s" : ""}` : "Create Session"}
               </motion.button>
             </div>
 
@@ -411,6 +465,8 @@ export default function AdminClassesPage() {
             ))
           )}
         </div>
+        </div>
+        )}
       </AnimatedPage>
     </div>
   );
