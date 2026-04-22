@@ -110,7 +110,6 @@ export default function AdminClassesPage() {
   const [classCode, setClassCode] = useState("");
   const [courseName, setCourseName] = useState("");
   const [teacherId, setTeacherId] = useState("");
-  const [coTeacherIds, setCoTeacherIds] = useState<Set<string>>(new Set());
   const [title, setTitle] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
   const [weekCount, setWeekCount] = useState(15);
@@ -178,7 +177,6 @@ export default function AdminClassesPage() {
     setClassCode("");
     setCourseName("");
     setTeacherId("");
-    setCoTeacherIds(new Set());
     setTitle("");
     setScheduledAt("");
     setWeekCount(15);
@@ -189,12 +187,6 @@ export default function AdminClassesPage() {
     setFormClassType("LECTURE");
   }
 
-  // Co-teachers is "every selected teacher except the primary" — send only the extras
-  const coTeacherIdsForMutation = useMemo(
-    () => Array.from(coTeacherIds).filter((id) => id !== teacherId),
-    [coTeacherIds, teacherId]
-  );
-
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
 
@@ -204,7 +196,6 @@ export default function AdminClassesPage() {
         classCode,
         courseName,
         teacherId,
-        coTeacherIds: coTeacherIdsForMutation.length ? coTeacherIdsForMutation : undefined,
         weekCount,
         startDate: scheduledAt,
         group: group || undefined,
@@ -215,7 +206,6 @@ export default function AdminClassesPage() {
         classCode,
         courseName,
         teacherId,
-        coTeacherIds: coTeacherIdsForMutation.length ? coTeacherIdsForMutation : undefined,
         title,
         scheduledAt,
         group: group || undefined,
@@ -385,19 +375,7 @@ export default function AdminClassesPage() {
                     <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
                   ))}
                 </select>
-                <p className="text-[10px] text-muted-foreground mt-1">Owner of grading & attendance</p>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Co-Teachers</label>
-                <TeacherMultiSelect
-                  teachers={(usersData?.users ?? []).map((u) => ({ id: u.id, name: u.name, email: u.email }))}
-                  selected={coTeacherIds}
-                  onChange={setCoTeacherIds}
-                  placeholder="Optional — select additional teachers"
-                  disabledIds={teacherId ? new Set([teacherId]) : undefined}
-                  className="w-full"
-                />
-                <p className="text-[10px] text-muted-foreground mt-1">Added to every week — you can change per-week later</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Add more teachers per-week after creating</p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
@@ -643,7 +621,6 @@ function CourseGroupCard({
 
   const [draftTitle, setDraftTitle] = useState(group.courseTitle);
   const [draftPrimaryTeacherId, setDraftPrimaryTeacherId] = useState(initialTeacherId);
-  const [draftCourseTeacherIds, setDraftCourseTeacherIds] = useState<Set<string>>(new Set());
   const [draftGroup, setDraftGroup] = useState(group.courseGroup ?? "");
 
   // Per-session edits keyed by sessionId → { title, scheduledAt, teacherIds }
@@ -663,11 +640,10 @@ function CourseGroupCard({
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
-  // When assignments arrive, seed the multi-select drafts
+  // When assignments arrive, seed the per-session teacher drafts
   React.useEffect(() => {
     if (!editing || !assignmentsQ.data) return;
     setDraftPrimaryTeacherId(assignmentsQ.data.primaryTeacherId);
-    setDraftCourseTeacherIds(new Set(assignmentsQ.data.courseTeacherIds));
     const map: Record<string, { title: string; scheduledAt: string; teacherIds: Set<string> }> = {};
     for (const s of group.sessions) {
       map[s.id] = {
@@ -695,16 +671,10 @@ function CourseGroupCard({
 
   const saving = updateCourse.isPending || updateSession.isPending;
 
-  // When primary teacher changes, make sure they're in the course teacher set
-  // AND in every session's teacher set (they can't be deselected from teaching)
+  // When primary teacher changes, auto-add them to every session's teacher set
+  // (they can't be deselected from teaching)
   React.useEffect(() => {
     if (!editing || !draftPrimaryTeacherId) return;
-    setDraftCourseTeacherIds((prev) => {
-      if (prev.has(draftPrimaryTeacherId)) return prev;
-      const next = new Set(prev);
-      next.add(draftPrimaryTeacherId);
-      return next;
-    });
     setSessionDrafts((prev) => {
       let changed = false;
       const next: typeof prev = {};
@@ -730,25 +700,16 @@ function CourseGroupCard({
         return;
       }
 
-      const origCourseSet = new Set(data.courseTeacherIds);
-      const newCourseSet = new Set(draftCourseTeacherIds);
-      if (draftPrimaryTeacherId) newCourseSet.add(draftPrimaryTeacherId);
-
-      const courseTeachersChanged =
-        newCourseSet.size !== origCourseSet.size ||
-        Array.from(newCourseSet).some((id) => !origCourseSet.has(id));
-
       const metaChanged =
         draftTitle !== group.courseTitle ||
         draftPrimaryTeacherId !== data.primaryTeacherId ||
         (draftGroup || "") !== (group.courseGroup ?? "");
 
-      if (metaChanged || courseTeachersChanged) {
+      if (metaChanged) {
         await updateCourse.mutateAsync({
           courseId: group.courseId,
-          title: metaChanged ? draftTitle : undefined,
+          title: draftTitle !== group.courseTitle ? draftTitle : undefined,
           teacherId: draftPrimaryTeacherId !== data.primaryTeacherId ? draftPrimaryTeacherId : undefined,
-          teacherIds: courseTeachersChanged ? Array.from(newCourseSet) : undefined,
           group: draftGroup !== (group.courseGroup ?? "")
             ? (draftGroup.trim() ? draftGroup.trim() : null)
             : undefined,
@@ -761,15 +722,9 @@ function CourseGroupCard({
         const origAt = toLocalDatetimeInput(s.scheduledAt);
         const origTeacherSet = new Set(data.sessionTeachers[s.id] ?? []);
 
-        // Session teachers must be a subset of the course teachers (filter out pruned ones)
-        const filteredDraftTeachers = new Set<string>();
-        for (const id of draft.teacherIds) {
-          if (newCourseSet.has(id)) filteredDraftTeachers.add(id);
-        }
-
         const teacherSetChanged =
-          filteredDraftTeachers.size !== origTeacherSet.size ||
-          Array.from(filteredDraftTeachers).some((id) => !origTeacherSet.has(id));
+          draft.teacherIds.size !== origTeacherSet.size ||
+          Array.from(draft.teacherIds).some((id) => !origTeacherSet.has(id));
 
         const titleChanged = draft.title !== s.title;
         const timeChanged = draft.scheduledAt !== origAt;
@@ -780,7 +735,7 @@ function CourseGroupCard({
           sessionId: s.id,
           title: titleChanged ? draft.title : undefined,
           scheduledAt: timeChanged ? new Date(draft.scheduledAt).toISOString() : undefined,
-          teacherIds: teacherSetChanged ? Array.from(filteredDraftTeachers) : undefined,
+          teacherIds: teacherSetChanged ? Array.from(draft.teacherIds) : undefined,
         });
       }
 
@@ -790,12 +745,6 @@ function CourseGroupCard({
       toast.error(e instanceof Error ? e.message : "Failed to save");
     }
   }
-
-  // Teachers visible in the per-session checkbox list (course teachers only)
-  const sessionTeacherPool = useMemo(
-    () => teachers.filter((t) => draftCourseTeacherIds.has(t.id)),
-    [teachers, draftCourseTeacherIds]
-  );
 
   return (
     <motion.div
@@ -811,7 +760,7 @@ function CourseGroupCard({
             <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold text-xl">
               {group.sessions[0]?.classCode.slice(0, 2).toUpperCase() || "CL"}
             </div>
-            <div className="min-w-0 flex-1 grid grid-cols-1 md:grid-cols-4 gap-2">
+            <div className="min-w-0 flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
               <input
                 type="text"
                 value={draftTitle}
@@ -830,13 +779,6 @@ function CourseGroupCard({
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
               </select>
-              <TeacherMultiSelect
-                teachers={teachers}
-                selected={draftCourseTeacherIds}
-                onChange={setDraftCourseTeacherIds}
-                placeholder="Co-teachers…"
-                disabledIds={draftPrimaryTeacherId ? new Set([draftPrimaryTeacherId]) : undefined}
-              />
               <input
                 type="text"
                 value={draftGroup}
@@ -986,7 +928,7 @@ function CourseGroupCard({
                       className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
                     />
                     <TeacherMultiSelect
-                      teachers={sessionTeacherPool}
+                      teachers={teachers}
                       selected={draft.teacherIds}
                       onChange={(next) =>
                         setSessionDrafts((prev) => ({
