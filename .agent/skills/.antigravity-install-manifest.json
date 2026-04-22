@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-04-10T18:58:53.113Z",
+  "entries": [
+    "api-endpoint-builder",
+    "astro",
+    "audit-skills",
+    "bug-hunter",
+    "codebase-audit-pre-push",
+    "docs",
+    "gdb-cli",
+    "global-chat-agent-discovery",
+    "hono",
+    "jq",
+    "k6-load-testing",
+    "performance-optimizer",
+    "python-pptx-generator",
+    "security/aws-compliance-checker",
+    "security/aws-iam-best-practices",
+    "security/aws-secrets-rotation",
+    "security/aws-security-audit",
+    "skill-check",
+    "sveltekit",
+    "technical-change-tracker",
+    "tmux"
+  ]
+}

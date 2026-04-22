@@ -138,6 +138,31 @@ export const courseWeeks = pgTable(
   ]
 );
 
+// Co-teachers for a course (primary teacher is courses.teacherId; this table
+// holds the full set including primary so multi-select UIs have one source of truth)
+export const courseTeachers = pgTable(
+  "course_teachers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    courseId: uuid("course_id")
+      .notNull()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("uq_course_teacher").on(table.courseId, table.userId),
+    index("idx_course_teachers_course").on(table.courseId),
+    index("idx_course_teachers_user").on(table.userId),
+  ]
+);
+
+export type CourseTeacher = typeof courseTeachers.$inferSelect;
+
 export type Category = typeof categories.$inferSelect;
 export type Course = typeof courses.$inferSelect;
 export type Module = typeof modules.$inferSelect;

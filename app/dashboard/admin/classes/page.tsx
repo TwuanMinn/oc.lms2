@@ -20,8 +20,10 @@ import {
   Search,
   Calendar,
   BookOpen,
+  Pencil,
+  Check,
 } from "lucide-react";
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { type Day, DAYS, PERIODS, buildEventDates } from "@/components/calendar/timetable-data";
 import { toast } from "sonner";
@@ -108,6 +110,7 @@ export default function AdminClassesPage() {
   const [classCode, setClassCode] = useState("");
   const [courseName, setCourseName] = useState("");
   const [teacherId, setTeacherId] = useState("");
+  const [coTeacherIds, setCoTeacherIds] = useState<Set<string>>(new Set());
   const [title, setTitle] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
   const [weekCount, setWeekCount] = useState(15);
@@ -175,6 +178,7 @@ export default function AdminClassesPage() {
     setClassCode("");
     setCourseName("");
     setTeacherId("");
+    setCoTeacherIds(new Set());
     setTitle("");
     setScheduledAt("");
     setWeekCount(15);
@@ -185,6 +189,12 @@ export default function AdminClassesPage() {
     setFormClassType("LECTURE");
   }
 
+  // Co-teachers is "every selected teacher except the primary" — send only the extras
+  const coTeacherIdsForMutation = useMemo(
+    () => Array.from(coTeacherIds).filter((id) => id !== teacherId),
+    [coTeacherIds, teacherId]
+  );
+
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
 
@@ -194,13 +204,22 @@ export default function AdminClassesPage() {
         classCode,
         courseName,
         teacherId,
+        coTeacherIds: coTeacherIdsForMutation.length ? coTeacherIdsForMutation : undefined,
         weekCount,
         startDate: scheduledAt,
         group: group || undefined,
       });
     } else {
       if (!classCode || !courseName || !teacherId || !title || !scheduledAt) return;
-      createSession.mutate({ classCode, courseName, teacherId, title, scheduledAt, group: group || undefined });
+      createSession.mutate({
+        classCode,
+        courseName,
+        teacherId,
+        coTeacherIds: coTeacherIdsForMutation.length ? coTeacherIdsForMutation : undefined,
+        title,
+        scheduledAt,
+        group: group || undefined,
+      });
     }
   }
 
@@ -358,7 +377,7 @@ export default function AdminClassesPage() {
                   className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Assign Teacher</label>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Primary Teacher</label>
                 <select value={teacherId} onChange={(e) => setTeacherId(e.target.value)}
                   className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required>
                   <option value="">Select a teacher</option>
@@ -366,6 +385,19 @@ export default function AdminClassesPage() {
                     <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
                   ))}
                 </select>
+                <p className="text-[10px] text-muted-foreground mt-1">Owner of grading & attendance</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Co-Teachers</label>
+                <TeacherMultiSelect
+                  teachers={(usersData?.users ?? []).map((u) => ({ id: u.id, name: u.name, email: u.email }))}
+                  selected={coTeacherIds}
+                  onChange={setCoTeacherIds}
+                  placeholder="Optional — select additional teachers"
+                  disabledIds={teacherId ? new Set([teacherId]) : undefined}
+                  className="w-full"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">Added to every week — you can change per-week later</p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
@@ -461,6 +493,7 @@ export default function AdminClassesPage() {
                 index={gi}
                 onDelete={(id) => deleteSession.mutate({ sessionId: id })}
                 isDeleting={deleteSession.isPending}
+                teachers={usersData?.users ?? []}
               />
             ))
           )}
@@ -475,19 +508,294 @@ export default function AdminClassesPage() {
 // ── Course Group Card ──
 // All weeks for one course inside one container
 
+// ── Multi-select dropdown for teachers (checkbox list with search) ──
+
+function TeacherMultiSelect({
+  teachers,
+  selected,
+  onChange,
+  placeholder = "Select teachers",
+  disabledIds,
+  className,
+}: {
+  teachers: Array<{ id: string; name: string; email: string }>;
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+  placeholder?: string;
+  disabledIds?: Set<string>;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [term, setTerm] = useState("");
+  const rootRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    if (open) document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const filtered = teachers.filter((t) => {
+    if (!term.trim()) return true;
+    const q = term.toLowerCase();
+    return t.name.toLowerCase().includes(q) || t.email.toLowerCase().includes(q);
+  });
+
+  // Disabled (locked-in) teachers don't count toward the label — the user hasn't
+  // picked them, they're just there because they can't be deselected
+  const selectedNames = teachers
+    .filter((t) => selected.has(t.id) && !disabledIds?.has(t.id))
+    .map((t) => t.name);
+  const label =
+    selectedNames.length === 0
+      ? placeholder
+      : selectedNames.length <= 2
+        ? selectedNames.join(", ")
+        : `${selectedNames.length} teachers selected`;
+
+  return (
+    <div ref={rootRef} className={`relative ${className ?? ""}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-left"
+      >
+        <span className={`truncate ${selectedNames.length ? "text-foreground" : "text-muted-foreground"}`}>
+          {label}
+        </span>
+        <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full min-w-[240px] rounded-lg border border-border/60 bg-popover shadow-lg overflow-hidden">
+          <div className="p-2 border-b border-border/60 bg-muted/20">
+            <input
+              type="text"
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="Search teachers..."
+              className="w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+          <div className="max-h-56 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <div className="p-3 text-center text-xs text-muted-foreground">No teachers found</div>
+            ) : (
+              filtered.map((t) => {
+                const checked = selected.has(t.id);
+                const isDisabled = disabledIds?.has(t.id) ?? false;
+                return (
+                  <label
+                    key={t.id}
+                    className={`flex items-center gap-2 px-3 py-2 text-xs ${isDisabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-muted/50"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={isDisabled}
+                      onChange={(e) => {
+                        const next = new Set(selected);
+                        if (e.target.checked) next.add(t.id);
+                        else next.delete(t.id);
+                        onChange(next);
+                      }}
+                      className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold truncate">{t.name}</div>
+                      <div className="text-[10px] text-muted-foreground truncate">{t.email}</div>
+                    </div>
+                  </label>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CourseGroupCard({
   group,
   index,
   onDelete,
   isDeleting,
+  teachers,
 }: {
   group: { courseTitle: string; courseId: string; courseGroup: string | null; teacherName: string; baseCode: string; sessions: SessionRow[] };
   index: number;
   onDelete: (sessionId: string) => void;
   isDeleting: boolean;
+  teachers: Array<{ id: string; name: string; email: string }>;
 }) {
   const [expanded, setExpanded] = useState(true);
   const [showStudents, setShowStudents] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const utils = trpc.useUtils();
+
+  // Derive current teacher id from name (best-effort) so the select has a starting value
+  const initialTeacherId = useMemo(
+    () => teachers.find((t) => t.name === group.teacherName)?.id ?? "",
+    [teachers, group.teacherName]
+  );
+
+  const [draftTitle, setDraftTitle] = useState(group.courseTitle);
+  const [draftPrimaryTeacherId, setDraftPrimaryTeacherId] = useState(initialTeacherId);
+  const [draftCourseTeacherIds, setDraftCourseTeacherIds] = useState<Set<string>>(new Set());
+  const [draftGroup, setDraftGroup] = useState(group.courseGroup ?? "");
+
+  // Per-session edits keyed by sessionId → { title, scheduledAt, teacherIds }
+  const [sessionDrafts, setSessionDrafts] = useState<
+    Record<string, { title: string; scheduledAt: string; teacherIds: Set<string> }>
+  >({});
+
+  // Only fetch teacher assignments when the user enters edit mode
+  const assignmentsQ = trpc.attendance.getTeacherAssignments.useQuery(
+    { courseId: group.courseId },
+    { enabled: editing }
+  );
+
+  function toLocalDatetimeInput(d: string | Date) {
+    const date = new Date(d);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  // When assignments arrive, seed the multi-select drafts
+  React.useEffect(() => {
+    if (!editing || !assignmentsQ.data) return;
+    setDraftPrimaryTeacherId(assignmentsQ.data.primaryTeacherId);
+    setDraftCourseTeacherIds(new Set(assignmentsQ.data.courseTeacherIds));
+    const map: Record<string, { title: string; scheduledAt: string; teacherIds: Set<string> }> = {};
+    for (const s of group.sessions) {
+      map[s.id] = {
+        title: s.title,
+        scheduledAt: toLocalDatetimeInput(s.scheduledAt),
+        teacherIds: new Set(assignmentsQ.data.sessionTeachers[s.id] ?? []),
+      };
+    }
+    setSessionDrafts(map);
+  }, [editing, assignmentsQ.data, group.sessions]);
+
+  function enterEdit() {
+    setDraftTitle(group.courseTitle);
+    setDraftGroup(group.courseGroup ?? "");
+    setEditing(true);
+  }
+
+  const invalidate = () => {
+    utils.attendance.getSessions.invalidate();
+    utils.attendance.getTeacherAssignments.invalidate({ courseId: group.courseId });
+  };
+
+  const updateCourse = trpc.attendance.updateCourseMeta.useMutation({ onSuccess: invalidate });
+  const updateSession = trpc.attendance.updateSession.useMutation({ onSuccess: invalidate });
+
+  const saving = updateCourse.isPending || updateSession.isPending;
+
+  // When primary teacher changes, make sure they're in the course teacher set
+  // AND in every session's teacher set (they can't be deselected from teaching)
+  React.useEffect(() => {
+    if (!editing || !draftPrimaryTeacherId) return;
+    setDraftCourseTeacherIds((prev) => {
+      if (prev.has(draftPrimaryTeacherId)) return prev;
+      const next = new Set(prev);
+      next.add(draftPrimaryTeacherId);
+      return next;
+    });
+    setSessionDrafts((prev) => {
+      let changed = false;
+      const next: typeof prev = {};
+      for (const [sid, d] of Object.entries(prev)) {
+        if (d.teacherIds.has(draftPrimaryTeacherId)) {
+          next[sid] = d;
+        } else {
+          changed = true;
+          const t = new Set(d.teacherIds);
+          t.add(draftPrimaryTeacherId);
+          next[sid] = { ...d, teacherIds: t };
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [draftPrimaryTeacherId, editing]);
+
+  async function handleSave() {
+    try {
+      const data = assignmentsQ.data;
+      if (!data) {
+        toast.error("Still loading — try again in a moment");
+        return;
+      }
+
+      const origCourseSet = new Set(data.courseTeacherIds);
+      const newCourseSet = new Set(draftCourseTeacherIds);
+      if (draftPrimaryTeacherId) newCourseSet.add(draftPrimaryTeacherId);
+
+      const courseTeachersChanged =
+        newCourseSet.size !== origCourseSet.size ||
+        Array.from(newCourseSet).some((id) => !origCourseSet.has(id));
+
+      const metaChanged =
+        draftTitle !== group.courseTitle ||
+        draftPrimaryTeacherId !== data.primaryTeacherId ||
+        (draftGroup || "") !== (group.courseGroup ?? "");
+
+      if (metaChanged || courseTeachersChanged) {
+        await updateCourse.mutateAsync({
+          courseId: group.courseId,
+          title: metaChanged ? draftTitle : undefined,
+          teacherId: draftPrimaryTeacherId !== data.primaryTeacherId ? draftPrimaryTeacherId : undefined,
+          teacherIds: courseTeachersChanged ? Array.from(newCourseSet) : undefined,
+          group: draftGroup !== (group.courseGroup ?? "")
+            ? (draftGroup.trim() ? draftGroup.trim() : null)
+            : undefined,
+        });
+      }
+
+      for (const s of group.sessions) {
+        const draft = sessionDrafts[s.id];
+        if (!draft) continue;
+        const origAt = toLocalDatetimeInput(s.scheduledAt);
+        const origTeacherSet = new Set(data.sessionTeachers[s.id] ?? []);
+
+        // Session teachers must be a subset of the course teachers (filter out pruned ones)
+        const filteredDraftTeachers = new Set<string>();
+        for (const id of draft.teacherIds) {
+          if (newCourseSet.has(id)) filteredDraftTeachers.add(id);
+        }
+
+        const teacherSetChanged =
+          filteredDraftTeachers.size !== origTeacherSet.size ||
+          Array.from(filteredDraftTeachers).some((id) => !origTeacherSet.has(id));
+
+        const titleChanged = draft.title !== s.title;
+        const timeChanged = draft.scheduledAt !== origAt;
+
+        if (!titleChanged && !timeChanged && !teacherSetChanged) continue;
+
+        await updateSession.mutateAsync({
+          sessionId: s.id,
+          title: titleChanged ? draft.title : undefined,
+          scheduledAt: timeChanged ? new Date(draft.scheduledAt).toISOString() : undefined,
+          teacherIds: teacherSetChanged ? Array.from(filteredDraftTeachers) : undefined,
+        });
+      }
+
+      toast.success("Saved ✓");
+      setEditing(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save");
+    }
+  }
+
+  // Teachers visible in the per-session checkbox list (course teachers only)
+  const sessionTeacherPool = useMemo(
+    () => teachers.filter((t) => draftCourseTeacherIds.has(t.id)),
+    [teachers, draftCourseTeacherIds]
+  );
 
   return (
     <motion.div
@@ -498,109 +806,230 @@ function CourseGroupCard({
     >
       {/* Course Header */}
       <div className="flex items-center gap-4 px-6 py-5 hover:bg-muted/10 transition-colors">
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-4 flex-1 min-w-0 text-left"
-        >
-          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold text-xl">
-            {group.sessions[0]?.classCode.slice(0, 2).toUpperCase() || "CL"}
+        {editing ? (
+          <div className="flex items-center gap-4 flex-1 min-w-0">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold text-xl">
+              {group.sessions[0]?.classCode.slice(0, 2).toUpperCase() || "CL"}
+            </div>
+            <div className="min-w-0 flex-1 grid grid-cols-1 md:grid-cols-4 gap-2">
+              <input
+                type="text"
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                placeholder="Course title"
+                className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+              />
+              <select
+                value={draftPrimaryTeacherId}
+                onChange={(e) => setDraftPrimaryTeacherId(e.target.value)}
+                title="Primary teacher"
+                className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+              >
+                <option value="">Primary teacher…</option>
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              <TeacherMultiSelect
+                teachers={teachers}
+                selected={draftCourseTeacherIds}
+                onChange={setDraftCourseTeacherIds}
+                placeholder="Co-teachers…"
+                disabledIds={draftPrimaryTeacherId ? new Set([draftPrimaryTeacherId]) : undefined}
+              />
+              <input
+                type="text"
+                value={draftGroup}
+                onChange={(e) => setDraftGroup(e.target.value)}
+                placeholder="Group (optional)"
+                className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+              />
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h3 className="text-lg font-bold truncate">{group.courseTitle}</h3>
-              {group.sessions[0]?.classCode && (
-                <span className="shrink-0 rounded-lg bg-primary/10 px-3 py-1 text-sm font-bold text-primary">
-                  {group.sessions[0].classCode.replace(/-W\d+$/, "")}
-                </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-4 flex-1 min-w-0 text-left"
+          >
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold text-xl">
+              {group.sessions[0]?.classCode.slice(0, 2).toUpperCase() || "CL"}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold truncate">{group.courseTitle}</h3>
+                {group.sessions[0]?.classCode && (
+                  <span className="shrink-0 rounded-lg bg-primary/10 px-3 py-1 text-sm font-bold text-primary">
+                    {group.sessions[0].classCode.replace(/-W\d+$/, "")}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Teacher: {group.teacherName}{group.courseGroup ? ` · Group ${group.courseGroup}` : ""} · {group.sessions.length} week{group.sessions.length !== 1 ? "s" : ""}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <span className="text-xs font-medium hidden sm:block">
+                {group.sessions.length} sessions
+              </span>
+              {expanded ? (
+                <ChevronDown className="h-5 w-5" />
+              ) : (
+                <ChevronRight className="h-5 w-5" />
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              Teacher: {group.teacherName}{group.courseGroup ? ` · Group ${group.courseGroup}` : ""} · {group.sessions.length} week{group.sessions.length !== 1 ? "s" : ""}
-            </p>
-          </div>
-          <div className="flex items-center gap-3 text-muted-foreground">
-            <span className="text-xs font-medium hidden sm:block">
-              {group.sessions.length} sessions
-            </span>
-            {expanded ? (
-              <ChevronDown className="h-5 w-5" />
-            ) : (
-              <ChevronRight className="h-5 w-5" />
-            )}
-          </div>
-        </button>
+          </button>
+        )}
 
-        {/* Manage Students */}
-        <button
-          type="button"
-          onClick={() => setShowStudents(!showStudents)}
-          className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
-            showStudents
-              ? "border-primary/30 bg-primary/10 text-primary"
-              : "border-border/50 bg-background text-muted-foreground hover:bg-accent"
-          }`}
-        >
-          <Users className="h-3.5 w-3.5" />
-          Students
-        </button>
+        {editing ? (
+          <>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              disabled={saving}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-accent transition-colors disabled:opacity-50"
+            >
+              <X className="h-3.5 w-3.5" />
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={enterEdit}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-accent transition-colors"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </button>
 
-        {/* Delete entire class */}
-        <button
-          type="button"
-          onClick={() => {
-            for (const s of group.sessions) {
-              onDelete(s.id);
-            }
-          }}
-          disabled={isDeleting}
-          className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs font-semibold text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete
-        </button>
+            <button
+              type="button"
+              onClick={() => setShowStudents(!showStudents)}
+              className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                showStudents
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "border-border/50 bg-background text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <Users className="h-3.5 w-3.5" />
+              Students
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                for (const s of group.sessions) {
+                  onDelete(s.id);
+                }
+              }}
+              disabled={isDeleting}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs font-semibold text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </button>
+          </>
+        )}
       </div>
 
       {/* Students Panel */}
-      {showStudents && (
+      {showStudents && !editing && (
         <div className="border-t border-border/40">
           <StudentManager courseId={group.courseId} />
         </div>
       )}
 
       {/* Weeks List */}
-      {expanded && (
+      {(expanded || editing) && (
         <div className="border-t border-border/40">
-          {group.sessions.map((session) => (
-            <div
-              key={session.id}
-              className="flex items-center gap-4 px-6 py-4 border-b border-border/20 last:border-b-0 hover:bg-muted/5 transition-colors group"
-            >
-              <div className="min-w-0 flex-1">
-                <h4 className="text-base font-bold text-primary">
-                  {session.title}
-                </h4>
-                <p className="text-xs text-primary/70 flex items-center gap-1.5 mt-0.5">
-                  <CalendarDays className="h-3 w-3" />
-                  {session.classCode} ({new Date(session.scheduledAt).toLocaleDateString("en-CA")} {new Date(session.scheduledAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })})
-                </p>
-              </div>
-
-              <span className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Users className="h-3.5 w-3.5" />
-                {session.studentCount}
-              </span>
-
-              <button
-                type="button"
-                onClick={() => onDelete(session.id)}
-                disabled={isDeleting}
-                className="shrink-0 rounded-lg p-1.5 text-muted-foreground/40 hover:bg-red-500/10 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
+          {group.sessions.map((session) => {
+            const draft = sessionDrafts[session.id];
+            return (
+              <div
+                key={session.id}
+                className="flex items-center gap-4 px-6 py-4 border-b border-border/20 last:border-b-0 hover:bg-muted/5 transition-colors group"
               >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
+                {editing && draft ? (
+                  <div className="min-w-0 flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input
+                      type="text"
+                      value={draft.title}
+                      onChange={(e) =>
+                        setSessionDrafts((prev) => ({
+                          ...prev,
+                          [session.id]: { ...prev[session.id], title: e.target.value },
+                        }))
+                      }
+                      placeholder="Session title"
+                      className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-semibold text-primary focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+                    />
+                    <input
+                      type="datetime-local"
+                      value={draft.scheduledAt}
+                      onChange={(e) =>
+                        setSessionDrafts((prev) => ({
+                          ...prev,
+                          [session.id]: { ...prev[session.id], scheduledAt: e.target.value },
+                        }))
+                      }
+                      className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+                    />
+                    <TeacherMultiSelect
+                      teachers={sessionTeacherPool}
+                      selected={draft.teacherIds}
+                      onChange={(next) =>
+                        setSessionDrafts((prev) => ({
+                          ...prev,
+                          [session.id]: { ...prev[session.id], teacherIds: next },
+                        }))
+                      }
+                      placeholder="Who teaches this week?"
+                      disabledIds={draftPrimaryTeacherId ? new Set([draftPrimaryTeacherId]) : undefined}
+                    />
+                  </div>
+                ) : (
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-base font-bold text-primary">
+                      {session.title}
+                    </h4>
+                    <p className="text-xs text-primary/70 flex items-center gap-1.5 mt-0.5">
+                      <CalendarDays className="h-3 w-3" />
+                      {session.classCode} ({new Date(session.scheduledAt).toLocaleDateString("en-CA")} {new Date(session.scheduledAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })})
+                    </p>
+                  </div>
+                )}
+
+                {!editing && (
+                  <span className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Users className="h-3.5 w-3.5" />
+                    {session.studentCount}
+                  </span>
+                )}
+
+                {!editing && (
+                  <button
+                    type="button"
+                    onClick={() => onDelete(session.id)}
+                    disabled={isDeleting}
+                    className="shrink-0 rounded-lg p-1.5 text-muted-foreground/40 hover:bg-red-500/10 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </motion.div>
@@ -614,7 +1043,7 @@ function StudentManager({ courseId }: { courseId: string }) {
   const { data: students, isLoading } = trpc.attendance.getCourseStudents.useQuery({ courseId });
   const { data: allStudents } = trpc.admin.getUsers.useQuery({ limit: 200, offset: 0, role: "STUDENT" });
 
-  const enrollMut = trpc.attendance.enrollStudent.useMutation({
+  const batchEnrollMut = trpc.attendance.batchEnrollStudents.useMutation({
     onSuccess: () => {
       utils.attendance.getCourseStudents.invalidate({ courseId });
       utils.attendance.getSessions.invalidate();
@@ -638,6 +1067,27 @@ function StudentManager({ courseId }: { courseId: string }) {
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
     u.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const enrolling = batchEnrollMut.isPending;
+
+  const handleBatchEnroll = async () => {
+    const ids = Array.from(selectedStudents);
+    if (!ids.length) return;
+    try {
+      const result = await batchEnrollMut.mutateAsync({ courseId, studentIds: ids });
+      setSelectedStudents(new Set());
+      setSearchTerm("");
+      if (result.enrolled > 0) {
+        toast.success(`Enrolled ${result.enrolled} student${result.enrolled > 1 ? "s" : ""} ✓`);
+      }
+      const skipped = ids.length - result.enrolled;
+      if (skipped > 0) {
+        toast.message(`${skipped} already enrolled`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to enroll students");
+    }
+  };
 
   return (
     <div className="px-6 py-4 bg-muted/5 space-y-3">
@@ -673,6 +1123,7 @@ function StudentManager({ courseId }: { courseId: string }) {
                     else next.delete(u.id);
                     setSelectedStudents(next);
                   }}
+                  disabled={enrolling}
                   className="rounded border-border text-primary focus:ring-primary h-4 w-4"
                 />
                 <div className="min-w-0 flex-1">
@@ -693,26 +1144,16 @@ function StudentManager({ courseId }: { courseId: string }) {
             </span>
             <button
               type="button"
-              onClick={async () => {
-                const ids = Array.from(selectedStudents);
-                if (!ids.length) return;
-                try {
-                  await Promise.all(ids.map(id => enrollMut.mutateAsync({ courseId, studentId: id })));
-                  setSelectedStudents(new Set());
-                  setSearchTerm("");
-                } catch (e) {
-                  console.error("Batch enrollment failed:", e);
-                }
-              }}
-              disabled={selectedStudents.size === 0 || enrollMut.isPending}
+              onClick={handleBatchEnroll}
+              disabled={selectedStudents.size === 0 || enrolling}
               className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50 transition-all hover:bg-primary/90"
             >
-              {enrollMut.isPending ? (
+              {enrolling ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <UserPlus className="h-3.5 w-3.5" />
               )}
-              Add Selected
+              {enrolling ? "Enrolling..." : "Add Selected"}
             </button>
           </div>
         </div>
@@ -752,8 +1193,8 @@ function StudentManager({ courseId }: { courseId: string }) {
         </div>
       )}
 
-      {enrollMut.error && (
-        <p className="text-xs text-red-500">{enrollMut.error.message}</p>
+      {batchEnrollMut.error && (
+        <p className="text-xs text-red-500">{batchEnrollMut.error.message}</p>
       )}
     </div>
   );

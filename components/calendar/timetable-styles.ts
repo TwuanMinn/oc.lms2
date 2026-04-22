@@ -255,6 +255,24 @@ export const STYLES = `
   padding: 4px;
 }
 
+/* Responsive grid adjustments for tablet/laptop */
+@media (min-width: 768px) and (max-width: 1279px) {
+  .grid-time {
+    min-height: 70px;
+    padding: 4px;
+  }
+  .grid-cell-empty {
+    min-height: 70px;
+  }
+  .grid-cell-filled {
+    min-height: 70px;
+    padding: 2px;
+  }
+  .grid-day-header {
+    padding: 10px 4px;
+  }
+}
+
 /* Slot Block (legacy) */
 .slot-block {
   position: relative;

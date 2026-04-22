@@ -10,6 +10,7 @@ export const attendanceRouter = router({
         classCode: z.string().min(1, "Class code is required"),
         courseName: z.string().min(1, "Course name is required"),
         teacherId: z.string().uuid(),
+        coTeacherIds: z.array(z.string().uuid()).optional(),
         title: z.string().min(1, "Title is required"),
         scheduledAt: z.string().min(1, "Schedule time is required"),
         group: z.string().optional(),
@@ -26,6 +27,7 @@ export const attendanceRouter = router({
         classCode: z.string().min(1, "Class code is required"),
         courseName: z.string().min(1, "Course name is required"),
         teacherId: z.string().uuid(),
+        coTeacherIds: z.array(z.string().uuid()).optional(),
         weekCount: z.number().min(1).max(52),
         startDate: z.string().min(1, "Start date is required"),
         group: z.string().optional(),
@@ -52,6 +54,39 @@ export const attendanceRouter = router({
     .input(z.object({ sessionId: z.string().uuid() }))
     .mutation(async ({ input }) => {
       return attendanceService.deleteClassSession(input.sessionId);
+    }),
+
+  // ── Admin: Update session (title / scheduled time / teachers) ──
+  updateSession: adminProcedure
+    .input(z.object({
+      sessionId: z.string().uuid(),
+      title: z.string().min(1).optional(),
+      scheduledAt: z.string().min(1).optional(),
+      primaryTeacherId: z.string().uuid().optional(),
+      teacherIds: z.array(z.string().uuid()).optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return attendanceService.updateClassSession(input);
+    }),
+
+  // ── Admin: Update course meta (title / primary teacher / co-teachers / group) ──
+  updateCourseMeta: adminProcedure
+    .input(z.object({
+      courseId: z.string().uuid(),
+      title: z.string().min(1).optional(),
+      teacherId: z.string().uuid().optional(),
+      teacherIds: z.array(z.string().uuid()).optional(),
+      group: z.string().nullable().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return attendanceService.updateCourseMeta(input);
+    }),
+
+  // ── Admin: Get teacher assignments for a course + its sessions ──
+  getTeacherAssignments: adminProcedure
+    .input(z.object({ courseId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      return attendanceService.getCourseTeacherAssignments(input.courseId);
     }),
 
   // ── Teacher: Get my sessions ──
@@ -150,6 +185,16 @@ export const attendanceRouter = router({
     }))
     .mutation(async ({ input }) => {
       return attendanceService.enrollStudent(input.courseId, input.studentId);
+    }),
+
+  // ── Admin: Batch enroll multiple students (single DB round-trip) ──
+  batchEnrollStudents: adminProcedure
+    .input(z.object({
+      courseId: z.string().uuid(),
+      studentIds: z.array(z.string().uuid()).min(1).max(500),
+    }))
+    .mutation(async ({ input }) => {
+      return attendanceService.batchEnrollStudents(input.courseId, input.studentIds);
     }),
 
   // ── Admin: Unenroll a student from a course ──

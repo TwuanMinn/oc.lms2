@@ -1,9 +1,9 @@
 import "server-only";
-import { eq, and, desc, sql, count } from "drizzle-orm";
+import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
-import { classeSessions, attendanceRecords, weekMaterials } from "@/server/db/schema/attendance";
+import { classeSessions, attendanceRecords, weekMaterials, sessionTeachers } from "@/server/db/schema/attendance";
 import { users } from "@/server/db/schema/users";
-import { courses } from "@/server/db/schema/courses";
+import { courses, courseTeachers } from "@/server/db/schema/courses";
 import { enrollments } from "@/server/db/schema/learning";
 import { TRPCError } from "@trpc/server";
 import { typedRows } from "@/lib/utils";
@@ -14,6 +14,7 @@ export async function createClassSession(input: {
   classCode: string;
   courseName: string;
   teacherId: string;
+  coTeacherIds?: string[];
   title: string;
   scheduledAt: string;
   group?: string;
@@ -76,6 +77,21 @@ export async function createClassSession(input: {
     })
     .returning();
 
+  // Seed join tables with the primary teacher + any co-teachers so multi-select UIs
+  // have consistent state
+  const allTeacherIds = new Set<string>([input.teacherId, ...(input.coTeacherIds ?? [])]);
+  const teacherRows = Array.from(allTeacherIds);
+
+  await db
+    .insert(courseTeachers)
+    .values(teacherRows.map((userId) => ({ courseId: course.id, userId })))
+    .onConflictDoNothing({ target: [courseTeachers.courseId, courseTeachers.userId] });
+
+  await db
+    .insert(sessionTeachers)
+    .values(teacherRows.map((userId) => ({ sessionId: session.id, userId })))
+    .onConflictDoNothing({ target: [sessionTeachers.sessionId, sessionTeachers.userId] });
+
   return session;
 }
 
@@ -114,9 +130,9 @@ export async function getClassSessions(input: {
       FROM class_sessions cs
       JOIN courses c ON c.id = cs.course_id
       JOIN users u ON u.id = cs.teacher_id
-      LEFT JOIN LATERAL (
-        SELECT count(*) AS cnt FROM enrollments WHERE enrollments.course_id = cs.course_id
-      ) ec ON true
+      LEFT JOIN (
+        SELECT course_id, count(*) AS cnt FROM enrollments GROUP BY course_id
+      ) ec ON ec.course_id = cs.course_id
       ORDER BY cs.scheduled_at DESC
       LIMIT ${input.limit} OFFSET ${input.offset}
     `),
@@ -136,12 +152,198 @@ export async function deleteClassSession(sessionId: string) {
   return { success: true };
 }
 
+// ── ADMIN: Update a single class session (title / scheduled time / teacher set) ──
+
+export async function updateClassSession(input: {
+  sessionId: string;
+  title?: string;
+  scheduledAt?: string;
+  primaryTeacherId?: string;
+  teacherIds?: string[];
+}) {
+  const updates: Record<string, unknown> = {};
+  if (input.title !== undefined) updates.title = input.title;
+  if (input.scheduledAt !== undefined) updates.scheduledAt = new Date(input.scheduledAt);
+  if (input.primaryTeacherId !== undefined) updates.teacherId = input.primaryTeacherId;
+
+  let session;
+  if (Object.keys(updates).length) {
+    [session] = await db
+      .update(classeSessions)
+      .set(updates)
+      .where(eq(classeSessions.id, input.sessionId))
+      .returning();
+
+    if (!session) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Session not found" });
+    }
+  } else {
+    [session] = await db.select().from(classeSessions).where(eq(classeSessions.id, input.sessionId));
+    if (!session) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Session not found" });
+    }
+  }
+
+  // Replace teacher set for this session if provided. Primary teacher is always included.
+  if (input.teacherIds !== undefined) {
+    const finalSet = new Set<string>(input.teacherIds);
+    finalSet.add(session.teacherId);
+    await db.delete(sessionTeachers).where(eq(sessionTeachers.sessionId, session.id));
+    if (finalSet.size) {
+      await db
+        .insert(sessionTeachers)
+        .values(Array.from(finalSet).map((userId) => ({ sessionId: session.id, userId })))
+        .onConflictDoNothing({ target: [sessionTeachers.sessionId, sessionTeachers.userId] });
+    }
+  } else if (input.primaryTeacherId !== undefined) {
+    // Primary changed but no explicit set: make sure primary is in the set
+    await db
+      .insert(sessionTeachers)
+      .values({ sessionId: session.id, userId: input.primaryTeacherId })
+      .onConflictDoNothing({ target: [sessionTeachers.sessionId, sessionTeachers.userId] });
+  }
+
+  return session;
+}
+
+// ── ADMIN: Update course meta + cascade primary teacher to all its sessions ──
+
+export async function updateCourseMeta(input: {
+  courseId: string;
+  title?: string;
+  teacherId?: string;
+  teacherIds?: string[];
+  group?: string | null;
+}) {
+  const courseUpdates: Record<string, unknown> = {};
+  if (input.title !== undefined) courseUpdates.title = input.title;
+  if (input.teacherId !== undefined) courseUpdates.teacherId = input.teacherId;
+  if (input.group !== undefined) courseUpdates.group = input.group;
+
+  let course;
+  if (Object.keys(courseUpdates).length) {
+    [course] = await db
+      .update(courses)
+      .set(courseUpdates)
+      .where(eq(courses.id, input.courseId))
+      .returning();
+
+    if (!course) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Course not found" });
+    }
+  } else {
+    [course] = await db.select().from(courses).where(eq(courses.id, input.courseId));
+    if (!course) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Course not found" });
+    }
+  }
+
+  // If primary teacher changed, cascade to all sessions of this course
+  if (input.teacherId !== undefined) {
+    await db
+      .update(classeSessions)
+      .set({ teacherId: input.teacherId })
+      .where(eq(classeSessions.courseId, input.courseId));
+  }
+
+  // Replace course-level teacher set if provided. Primary teacher is always included.
+  if (input.teacherIds !== undefined) {
+    const finalSet = new Set<string>(input.teacherIds);
+    finalSet.add(course.teacherId);
+    await db.delete(courseTeachers).where(eq(courseTeachers.courseId, course.id));
+    if (finalSet.size) {
+      await db
+        .insert(courseTeachers)
+        .values(Array.from(finalSet).map((userId) => ({ courseId: course.id, userId })))
+        .onConflictDoNothing({ target: [courseTeachers.courseId, courseTeachers.userId] });
+    }
+
+    // Prune per-session teachers that are no longer on the course (keep primary)
+    const courseSessions = await db
+      .select({ id: classeSessions.id, teacherId: classeSessions.teacherId })
+      .from(classeSessions)
+      .where(eq(classeSessions.courseId, course.id));
+
+    if (courseSessions.length) {
+      const sessionIds = courseSessions.map((s) => s.id);
+      const keepIds = Array.from(finalSet);
+      await db
+        .delete(sessionTeachers)
+        .where(
+          and(
+            inArray(sessionTeachers.sessionId, sessionIds),
+            sql`${sessionTeachers.userId} NOT IN (${sql.join(keepIds.map((id) => sql`${id}::uuid`), sql`, `)})`
+          )
+        );
+
+      // Ensure every session still has its primary teacher in the set
+      await db
+        .insert(sessionTeachers)
+        .values(courseSessions.map((s) => ({ sessionId: s.id, userId: s.teacherId })))
+        .onConflictDoNothing({ target: [sessionTeachers.sessionId, sessionTeachers.userId] });
+    }
+  } else if (input.teacherId !== undefined) {
+    // Primary changed but no explicit set: make sure primary is in the course_teachers set
+    await db
+      .insert(courseTeachers)
+      .values({ courseId: course.id, userId: input.teacherId })
+      .onConflictDoNothing({ target: [courseTeachers.courseId, courseTeachers.userId] });
+  }
+
+  return course;
+}
+
+// ── ADMIN: Fetch teacher assignments for a course + all its sessions ──
+
+export async function getCourseTeacherAssignments(courseId: string) {
+  const [course] = await db
+    .select({ id: courses.id, primaryTeacherId: courses.teacherId })
+    .from(courses)
+    .where(eq(courses.id, courseId));
+
+  if (!course) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Course not found" });
+  }
+
+  const courseTeacherRows = await db
+    .select({ userId: courseTeachers.userId })
+    .from(courseTeachers)
+    .where(eq(courseTeachers.courseId, courseId));
+
+  const sessions = await db
+    .select({ id: classeSessions.id, primaryTeacherId: classeSessions.teacherId })
+    .from(classeSessions)
+    .where(eq(classeSessions.courseId, courseId));
+
+  const sessionIds = sessions.map((s) => s.id);
+  const sessionTeacherRows = sessionIds.length
+    ? await db
+        .select({ sessionId: sessionTeachers.sessionId, userId: sessionTeachers.userId })
+        .from(sessionTeachers)
+        .where(inArray(sessionTeachers.sessionId, sessionIds))
+    : [];
+
+  const perSession: Record<string, string[]> = {};
+  for (const s of sessions) perSession[s.id] = [];
+  for (const row of sessionTeacherRows) {
+    if (!perSession[row.sessionId]) perSession[row.sessionId] = [];
+    perSession[row.sessionId].push(row.userId);
+  }
+
+  return {
+    primaryTeacherId: course.primaryTeacherId,
+    courseTeacherIds: courseTeacherRows.map((r) => r.userId),
+    sessionTeachers: perSession,
+  };
+}
+
 // ── ADMIN: Batch create sessions (multiple weeks) ──
 
 export async function batchCreateSessions(input: {
   classCode: string;
   courseName: string;
   teacherId: string;
+  coTeacherIds?: string[];
   weekCount: number;
   startDate: string;
   group?: string;
@@ -215,6 +417,25 @@ export async function batchCreateSessions(input: {
     sessions.push(session);
   }
 
+  // Seed join tables with the primary teacher + any co-teachers
+  const allTeacherIds = new Set<string>([input.teacherId, ...(input.coTeacherIds ?? [])]);
+  const teacherRows = Array.from(allTeacherIds);
+
+  await db
+    .insert(courseTeachers)
+    .values(teacherRows.map((userId) => ({ courseId: course.id, userId })))
+    .onConflictDoNothing({ target: [courseTeachers.courseId, courseTeachers.userId] });
+
+  if (sessions.length) {
+    const sessionTeacherRows = sessions.flatMap((s) =>
+      teacherRows.map((userId) => ({ sessionId: s.id, userId }))
+    );
+    await db
+      .insert(sessionTeachers)
+      .values(sessionTeacherRows)
+      .onConflictDoNothing({ target: [sessionTeachers.sessionId, sessionTeachers.userId] });
+  }
+
   return { course, sessions };
 }
 
@@ -242,12 +463,12 @@ export async function getTeacherSessions(teacherId: string) {
       COALESCE(ac.cnt, 0)::int AS "markedCount"
     FROM class_sessions cs
     JOIN courses c ON c.id = cs.course_id
-    LEFT JOIN LATERAL (
-      SELECT count(*) AS cnt FROM enrollments WHERE enrollments.course_id = cs.course_id
-    ) ec ON true
-    LEFT JOIN LATERAL (
-      SELECT count(*) AS cnt FROM attendance_records WHERE attendance_records.session_id = cs.id
-    ) ac ON true
+    LEFT JOIN (
+      SELECT course_id, count(*) AS cnt FROM enrollments GROUP BY course_id
+    ) ec ON ec.course_id = cs.course_id
+    LEFT JOIN (
+      SELECT session_id, count(*) AS cnt FROM attendance_records GROUP BY session_id
+    ) ac ON ac.session_id = cs.id
     WHERE cs.teacher_id = ${teacherId}
     ORDER BY cs.scheduled_at DESC
   `);
@@ -605,20 +826,38 @@ export async function getCourseStudents(courseId: string) {
 // ── ADMIN: Enroll a student in a course ──
 
 export async function enrollStudent(courseId: string, studentId: string) {
+  // Check if already enrolled
+  const [existing] = await db
+    .select()
+    .from(enrollments)
+    .where(and(eq(enrollments.userId, studentId), eq(enrollments.courseId, courseId)));
+
+  if (existing) {
+    // Already enrolled — return the existing enrollment instead of throwing
+    return existing;
+  }
+
   const [enrollment] = await db
     .insert(enrollments)
     .values({ userId: studentId, courseId })
-    .onConflictDoNothing()
     .returning();
 
-  if (!enrollment) {
-    throw new TRPCError({
-      code: "CONFLICT",
-      message: "Student is already enrolled in this course",
-    });
-  }
-
   return enrollment;
+}
+
+// ── ADMIN: Batch enroll multiple students in a course (single round-trip) ──
+
+export async function batchEnrollStudents(courseId: string, studentIds: string[]) {
+  if (!studentIds.length) return { enrolled: 0 };
+
+  const values = studentIds.map((userId) => ({ userId, courseId }));
+  const inserted = await db
+    .insert(enrollments)
+    .values(values)
+    .onConflictDoNothing({ target: [enrollments.userId, enrollments.courseId] })
+    .returning({ id: enrollments.id });
+
+  return { enrolled: inserted.length };
 }
 
 // ── ADMIN: Unenroll a student from a course ──

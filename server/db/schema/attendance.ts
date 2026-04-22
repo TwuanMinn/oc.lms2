@@ -102,6 +102,32 @@ export const weekMaterials = pgTable(
   ]
 );
 
+// Teachers assigned to a specific session (primary teacher is class_sessions.teacherId;
+// this table holds the full set including primary so per-week multi-select UIs have
+// one source of truth)
+export const sessionTeachers = pgTable(
+  "session_teachers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => classeSessions.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("uq_session_teacher").on(table.sessionId, table.userId),
+    index("idx_session_teachers_session").on(table.sessionId),
+    index("idx_session_teachers_user").on(table.userId),
+  ]
+);
+
+export type SessionTeacher = typeof sessionTeachers.$inferSelect;
+
 export type ClassSession = typeof classeSessions.$inferSelect;
 export type NewClassSession = typeof classeSessions.$inferInsert;
 export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
