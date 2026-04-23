@@ -66,6 +66,19 @@ export async function createClassSession(input: {
     }
   }
 
+  // Check for duplicate class code before insert
+  const [existingSession] = await db
+    .select({ id: classeSessions.id })
+    .from(classeSessions)
+    .where(eq(classeSessions.classCode, input.classCode));
+
+  if (existingSession) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: `Class code "${input.classCode}" already exists. Use a different code or delete the existing class first.`,
+    });
+  }
+
   const [session] = await db
     .insert(classeSessions)
     .values({
@@ -112,6 +125,11 @@ export async function getClassSessions(input: {
     scheduledAt: Date;
     createdAt: Date;
     studentCount: number;
+    scheduleRoom: string | null;
+    scheduleClassType: string | null;
+    scheduleDay: string | null;
+    scheduleStartHM: string | null;
+    scheduleEndHM: string | null;
   }
 
   const [sessions, totalResult] = await Promise.all([
@@ -126,13 +144,25 @@ export async function getClassSessions(input: {
         u.name AS "teacherName",
         cs.scheduled_at AS "scheduledAt",
         cs.created_at AS "createdAt",
-        COALESCE(ec.cnt, 0)::int AS "studentCount"
+        COALESCE(ec.cnt, 0)::int AS "studentCount",
+        se.room AS "scheduleRoom",
+        se.class_type AS "scheduleClassType",
+        TRIM(TO_CHAR(se.start_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'Day')) AS "scheduleDay",
+        TO_CHAR(se.start_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI') AS "scheduleStartHM",
+        TO_CHAR(se.end_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI') AS "scheduleEndHM"
       FROM class_sessions cs
       JOIN courses c ON c.id = cs.course_id
       JOIN users u ON u.id = cs.teacher_id
       LEFT JOIN (
         SELECT course_id, count(*) AS cnt FROM enrollments GROUP BY course_id
       ) ec ON ec.course_id = cs.course_id
+      LEFT JOIN LATERAL (
+        SELECT room, class_type, start_time, end_time
+        FROM schedule_events
+        WHERE schedule_events.course_id = cs.course_id
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) se ON true
       ORDER BY cs.scheduled_at DESC
       LIMIT ${input.limit} OFFSET ${input.offset}
     `),
@@ -397,6 +427,23 @@ export async function batchCreateSessions(input: {
 
   const sessions = [];
   const baseDate = new Date(input.startDate);
+
+  // Pre-flight: check if any week codes already exist
+  const weekCodes = Array.from({ length: input.weekCount }, (_, i) =>
+    `${input.classCode}-W${String(i + 1).padStart(2, "0")}`
+  );
+  const existingCodes = await db
+    .select({ classCode: classeSessions.classCode })
+    .from(classeSessions)
+    .where(inArray(classeSessions.classCode, weekCodes));
+
+  if (existingCodes.length > 0) {
+    const dupes = existingCodes.map(r => r.classCode).join(", ");
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: `Class code(s) already exist: ${dupes}. Use a different base code or delete the existing class first.`,
+    });
+  }
 
   for (let i = 0; i < input.weekCount; i++) {
     const weekNum = String(i + 1).padStart(2, "0");

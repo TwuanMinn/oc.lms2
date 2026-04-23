@@ -44,6 +44,11 @@ interface SessionRow {
   scheduledAt: string | Date;
   createdAt: string | Date;
   studentCount: number;
+  scheduleRoom: string | null;
+  scheduleClassType: string | null;
+  scheduleDay: string | null;
+  scheduleStartHM: string | null;
+  scheduleEndHM: string | null;
 }
 
 type ClassTab = "manage" | "schedule";
@@ -81,25 +86,27 @@ export default function AdminClassesPage() {
   const createSession = trpc.attendance.createSession.useMutation({
     onSuccess: async (data) => {
       utils.attendance.getSessions.invalidate();
-      // Schedule on timetable using the courseId from the created session
       if (data?.courseId) {
         scheduleOnTimetable(data.courseId, courseName);
       }
+      toast.success("Class session created ✓");
       setShowForm(false);
       resetForm();
     },
+    onError: (e) => toast.error(e.message),
   });
 
   const batchCreate = trpc.attendance.batchCreateSessions.useMutation({
     onSuccess: (data) => {
       utils.attendance.getSessions.invalidate();
-      // Schedule on timetable using the courseId returned from batch create
       if (data?.course?.id) {
         scheduleOnTimetable(data.course.id, data.course.title);
       }
+      toast.success(`Class created with ${data?.sessions?.length ?? 0} weeks ✓`);
       setShowForm(false);
       resetForm();
     },
+    onError: (e) => toast.error(e.message),
   });
 
   const deleteSession = trpc.attendance.deleteSession.useMutation({
@@ -109,7 +116,7 @@ export default function AdminClassesPage() {
   const [showForm, setShowForm] = useState(false);
   const [classCode, setClassCode] = useState("");
   const [courseName, setCourseName] = useState("");
-  const [teacherId, setTeacherId] = useState("");
+  const [selectedTeacherIds, setSelectedTeacherIds] = useState<Set<string>>(new Set());
   const [title, setTitle] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
   const [weekCount, setWeekCount] = useState(15);
@@ -138,7 +145,19 @@ export default function AdminClassesPage() {
   const groupedSessions = useMemo(() => {
     if (!data?.sessions) return [];
 
-    const grouped: Record<string, { courseTitle: string; courseId: string; courseGroup: string | null; teacherName: string; baseCode: string; sessions: SessionRow[] }> = {};
+    const grouped: Record<string, {
+      courseTitle: string;
+      courseId: string;
+      courseGroup: string | null;
+      teacherName: string;
+      baseCode: string;
+      scheduleRoom: string | null;
+      scheduleClassType: string | null;
+      scheduleDay: string | null;
+      scheduleStartHM: string | null;
+      scheduleEndHM: string | null;
+      sessions: SessionRow[];
+    }> = {};
 
     for (const s of data.sessions) {
       const baseCode = s.classCode.replace(/-W\d+$/, "");
@@ -149,6 +168,11 @@ export default function AdminClassesPage() {
           courseGroup: s.courseGroup,
           teacherName: s.teacherName,
           baseCode,
+          scheduleRoom: s.scheduleRoom,
+          scheduleClassType: s.scheduleClassType,
+          scheduleDay: s.scheduleDay,
+          scheduleStartHM: s.scheduleStartHM,
+          scheduleEndHM: s.scheduleEndHM,
           sessions: [],
         };
       }
@@ -176,7 +200,7 @@ export default function AdminClassesPage() {
   function resetForm() {
     setClassCode("");
     setCourseName("");
-    setTeacherId("");
+    setSelectedTeacherIds(new Set());
     setTitle("");
     setScheduledAt("");
     setWeekCount(15);
@@ -190,22 +214,28 @@ export default function AdminClassesPage() {
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
 
+    const teacherArr = Array.from(selectedTeacherIds);
+    const primaryTeacherId = teacherArr[0];
+    const coTeacherIds = teacherArr.slice(1);
+
     if (createMode === "multi") {
-      if (!classCode || !courseName || !teacherId || !scheduledAt || weekCount < 1) return;
+      if (!classCode || !courseName || !primaryTeacherId || !scheduledAt || weekCount < 1) return;
       batchCreate.mutate({
         classCode,
         courseName,
-        teacherId,
+        teacherId: primaryTeacherId,
+        coTeacherIds: coTeacherIds.length > 0 ? coTeacherIds : undefined,
         weekCount,
         startDate: scheduledAt,
         group: group || undefined,
       });
     } else {
-      if (!classCode || !courseName || !teacherId || !title || !scheduledAt) return;
+      if (!classCode || !courseName || !primaryTeacherId || !title || !scheduledAt) return;
       createSession.mutate({
         classCode,
         courseName,
-        teacherId,
+        teacherId: primaryTeacherId,
+        coTeacherIds: coTeacherIds.length > 0 ? coTeacherIds : undefined,
         title,
         scheduledAt,
         group: group || undefined,
@@ -367,15 +397,19 @@ export default function AdminClassesPage() {
                   className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Primary Teacher</label>
-                <select value={teacherId} onChange={(e) => setTeacherId(e.target.value)}
-                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-3 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none" required>
-                  <option value="">Select a teacher</option>
-                  {usersData?.users?.map((u) => (
-                    <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-muted-foreground mt-1">Add more teachers per-week after creating</p>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">Assign Teachers</label>
+                <TeacherMultiSelect
+                  teachers={usersData?.users ?? []}
+                  selected={selectedTeacherIds}
+                  onChange={setSelectedTeacherIds}
+                  placeholder="Select teachers"
+                  className="[&_button]:rounded-xl [&_button]:py-3 [&_button]:px-4"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {selectedTeacherIds.size === 0
+                    ? "Select at least one teacher (first = primary)"
+                    : `${selectedTeacherIds.size} teacher${selectedTeacherIds.size > 1 ? "s" : ""} · first selected = primary`}
+                </p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wider">
@@ -602,7 +636,7 @@ function CourseGroupCard({
   isDeleting,
   teachers,
 }: {
-  group: { courseTitle: string; courseId: string; courseGroup: string | null; teacherName: string; baseCode: string; sessions: SessionRow[] };
+  group: { courseTitle: string; courseId: string; courseGroup: string | null; teacherName: string; baseCode: string; scheduleRoom: string | null; scheduleClassType: string | null; scheduleDay: string | null; scheduleStartHM: string | null; scheduleEndHM: string | null; sessions: SessionRow[] };
   index: number;
   onDelete: (sessionId: string) => void;
   isDeleting: boolean;
@@ -611,6 +645,9 @@ function CourseGroupCard({
   const [expanded, setExpanded] = useState(true);
   const [showStudents, setShowStudents] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [quickAssignSessionId, setQuickAssignSessionId] = useState<string | null>(null);
+  const [quickAssignTeachers, setQuickAssignTeachers] = useState<Set<string>>(new Set());
+  const [quickAssignSaving, setQuickAssignSaving] = useState(false);
   const utils = trpc.useUtils();
 
   // Derive current teacher id from name (best-effort) so the select has a starting value
@@ -621,6 +658,7 @@ function CourseGroupCard({
 
   const [draftTitle, setDraftTitle] = useState(group.courseTitle);
   const [draftPrimaryTeacherId, setDraftPrimaryTeacherId] = useState(initialTeacherId);
+  const [draftCourseTeacherIds, setDraftCourseTeacherIds] = useState<Set<string>>(new Set());
   const [draftGroup, setDraftGroup] = useState(group.courseGroup ?? "");
 
   // Per-session edits keyed by sessionId → { title, scheduledAt, teacherIds }
@@ -628,10 +666,10 @@ function CourseGroupCard({
     Record<string, { title: string; scheduledAt: string; teacherIds: Set<string> }>
   >({});
 
-  // Only fetch teacher assignments when the user enters edit mode
+  // Fetch teacher assignments when the user enters edit mode or quick-assigns
   const assignmentsQ = trpc.attendance.getTeacherAssignments.useQuery(
     { courseId: group.courseId },
-    { enabled: editing }
+    { enabled: editing || quickAssignSessionId !== null }
   );
 
   function toLocalDatetimeInput(d: string | Date) {
@@ -644,6 +682,12 @@ function CourseGroupCard({
   React.useEffect(() => {
     if (!editing || !assignmentsQ.data) return;
     setDraftPrimaryTeacherId(assignmentsQ.data.primaryTeacherId);
+    // Build course-level teacher set (primary + all unique session teachers)
+    const courseTeachers = new Set<string>([assignmentsQ.data.primaryTeacherId]);
+    for (const ids of Object.values(assignmentsQ.data.sessionTeachers)) {
+      for (const id of ids) courseTeachers.add(id);
+    }
+    setDraftCourseTeacherIds(courseTeachers);
     const map: Record<string, { title: string; scheduledAt: string; teacherIds: Set<string> }> = {};
     for (const s of group.sessions) {
       map[s.id] = {
@@ -655,9 +699,17 @@ function CourseGroupCard({
     setSessionDrafts(map);
   }, [editing, assignmentsQ.data, group.sessions]);
 
+  // When assignments arrive for quick-assign mode, seed that session's teachers
+  React.useEffect(() => {
+    if (!quickAssignSessionId || !assignmentsQ.data) return;
+    const ids = assignmentsQ.data.sessionTeachers[quickAssignSessionId] ?? [];
+    setQuickAssignTeachers(new Set(ids));
+  }, [quickAssignSessionId, assignmentsQ.data]);
+
   function enterEdit() {
     setDraftTitle(group.courseTitle);
     setDraftGroup(group.courseGroup ?? "");
+    setQuickAssignSessionId(null);
     setEditing(true);
   }
 
@@ -670,6 +722,15 @@ function CourseGroupCard({
   const updateSession = trpc.attendance.updateSession.useMutation({ onSuccess: invalidate });
 
   const saving = updateCourse.isPending || updateSession.isPending;
+
+  // Derive primary teacher from the course-level set (first entry)
+  React.useEffect(() => {
+    if (!editing) return;
+    const arr = Array.from(draftCourseTeacherIds);
+    if (arr.length > 0 && arr[0] !== draftPrimaryTeacherId) {
+      setDraftPrimaryTeacherId(arr[0]);
+    }
+  }, [draftCourseTeacherIds, editing]);
 
   // When primary teacher changes, auto-add them to every session's teacher set
   // (they can't be deselected from teaching)
@@ -700,16 +761,18 @@ function CourseGroupCard({
         return;
       }
 
+      const courseTeacherArr = Array.from(draftCourseTeacherIds);
+      const newPrimary = courseTeacherArr[0] ?? draftPrimaryTeacherId;
       const metaChanged =
         draftTitle !== group.courseTitle ||
-        draftPrimaryTeacherId !== data.primaryTeacherId ||
+        newPrimary !== data.primaryTeacherId ||
         (draftGroup || "") !== (group.courseGroup ?? "");
 
       if (metaChanged) {
         await updateCourse.mutateAsync({
           courseId: group.courseId,
           title: draftTitle !== group.courseTitle ? draftTitle : undefined,
-          teacherId: draftPrimaryTeacherId !== data.primaryTeacherId ? draftPrimaryTeacherId : undefined,
+          teacherId: newPrimary !== data.primaryTeacherId ? newPrimary : undefined,
           group: draftGroup !== (group.courseGroup ?? "")
             ? (draftGroup.trim() ? draftGroup.trim() : null)
             : undefined,
@@ -746,6 +809,24 @@ function CourseGroupCard({
     }
   }
 
+  // Quick-assign: save teachers for a single session without full edit mode
+  async function handleQuickAssignSave() {
+    if (!quickAssignSessionId) return;
+    setQuickAssignSaving(true);
+    try {
+      await updateSession.mutateAsync({
+        sessionId: quickAssignSessionId,
+        teacherIds: Array.from(quickAssignTeachers),
+      });
+      toast.success("Teachers updated ✓");
+      setQuickAssignSessionId(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update teachers");
+    } finally {
+      setQuickAssignSaving(false);
+    }
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -768,17 +849,12 @@ function CourseGroupCard({
                 placeholder="Course title"
                 className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
               />
-              <select
-                value={draftPrimaryTeacherId}
-                onChange={(e) => setDraftPrimaryTeacherId(e.target.value)}
-                title="Primary teacher"
-                className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
-              >
-                <option value="">Primary teacher…</option>
-                {teachers.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+              <TeacherMultiSelect
+                teachers={teachers}
+                selected={draftCourseTeacherIds}
+                onChange={setDraftCourseTeacherIds}
+                placeholder="Assign teachers…"
+              />
               <input
                 type="text"
                 value={draftGroup}
@@ -806,8 +882,19 @@ function CourseGroupCard({
                   </span>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Teacher: {group.teacherName}{group.courseGroup ? ` · Group ${group.courseGroup}` : ""} · {group.sessions.length} week{group.sessions.length !== 1 ? "s" : ""}
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Teacher: {group.teacherName}
+                {group.courseGroup ? ` · Group ${group.courseGroup}` : ""}
+                {group.scheduleDay ? ` · ${group.scheduleDay}` : ""}
+                {group.scheduleStartHM ? (() => {
+                  const matched = PERIODS.find(p => p.start === group.scheduleStartHM);
+                  return matched
+                    ? ` · ${matched.label} (${matched.start} – ${matched.end})`
+                    : ` · ${group.scheduleStartHM}${group.scheduleEndHM ? ` – ${group.scheduleEndHM}` : ""}`;
+                })() : ""}
+                {group.scheduleRoom ? ` · ${group.scheduleRoom}` : ""}
+                {group.scheduleClassType ? ` · ${group.scheduleClassType.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()).replace(/\B\w+/g, c => c.toLowerCase())}` : ""}
+                {" · "}{group.sessions.length} week{group.sessions.length !== 1 ? "s" : ""}
               </p>
             </div>
             <div className="flex items-center gap-3 text-muted-foreground">
@@ -949,25 +1036,73 @@ function CourseGroupCard({
                       <CalendarDays className="h-3 w-3" />
                       {session.classCode} ({new Date(session.scheduledAt).toLocaleDateString("en-CA")} {new Date(session.scheduledAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })})
                     </p>
+                    {/* Inline quick-assign panel */}
+                    {quickAssignSessionId === session.id && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <TeacherMultiSelect
+                          teachers={teachers}
+                          selected={quickAssignTeachers}
+                          onChange={setQuickAssignTeachers}
+                          placeholder="Assign teachers…"
+                          className="flex-1 min-w-[200px]"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleQuickAssignSave}
+                          disabled={quickAssignSaving}
+                          className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                        >
+                          {quickAssignSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setQuickAssignSessionId(null)}
+                          className="shrink-0 rounded-lg p-1.5 text-muted-foreground hover:bg-accent transition-colors"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {!editing && (
-                  <span className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Users className="h-3.5 w-3.5" />
-                    {session.studentCount}
-                  </span>
-                )}
+                  <div className="flex items-center gap-2">
+                    <span className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Users className="h-3.5 w-3.5" />
+                      {session.studentCount}
+                    </span>
 
-                {!editing && (
-                  <button
-                    type="button"
-                    onClick={() => onDelete(session.id)}
-                    disabled={isDeleting}
-                    className="shrink-0 rounded-lg p-1.5 text-muted-foreground/40 hover:bg-red-500/10 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                    {/* Quick-assign teacher button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (quickAssignSessionId === session.id) {
+                          setQuickAssignSessionId(null);
+                        } else {
+                          setQuickAssignSessionId(session.id);
+                        }
+                      }}
+                      title="Assign teachers to this week"
+                      className={`shrink-0 rounded-lg p-1.5 transition-colors ${
+                        quickAssignSessionId === session.id
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground/40 hover:bg-primary/10 hover:text-primary opacity-0 group-hover:opacity-100"
+                      }`}
+                    >
+                      <UserPlus className="h-3.5 w-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onDelete(session.id)}
+                      disabled={isDeleting}
+                      className="shrink-0 rounded-lg p-1.5 text-muted-foreground/40 hover:bg-red-500/10 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 )}
               </div>
             );
