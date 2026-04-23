@@ -127,9 +127,8 @@ export async function getClassSessions(input: {
     studentCount: number;
     scheduleRoom: string | null;
     scheduleClassType: string | null;
-    scheduleDay: string | null;
-    scheduleStartHM: string | null;
-    scheduleEndHM: string | null;
+    scheduleDays: string | null;
+    schedulePeriods: string | null;
   }
 
   const [sessions, totalResult] = await Promise.all([
@@ -147,22 +146,24 @@ export async function getClassSessions(input: {
         COALESCE(ec.cnt, 0)::int AS "studentCount",
         se.room AS "scheduleRoom",
         se.class_type AS "scheduleClassType",
-        TRIM(TO_CHAR(se.start_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'Day')) AS "scheduleDay",
-        TO_CHAR(se.start_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI') AS "scheduleStartHM",
-        TO_CHAR(se.end_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI') AS "scheduleEndHM"
+        se.schedule_days AS "scheduleDays",
+        se.schedule_periods AS "schedulePeriods"
       FROM class_sessions cs
       JOIN courses c ON c.id = cs.course_id
       JOIN users u ON u.id = cs.teacher_id
       LEFT JOIN (
         SELECT course_id, count(*) AS cnt FROM enrollments GROUP BY course_id
       ) ec ON ec.course_id = cs.course_id
-      LEFT JOIN LATERAL (
-        SELECT room, class_type, start_time, end_time
+      LEFT JOIN (
+        SELECT
+          course_id,
+          string_agg(DISTINCT TRIM(TO_CHAR(start_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'Day')), ', ') AS schedule_days,
+          string_agg(DISTINCT TO_CHAR(start_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI') || ' – ' || TO_CHAR(end_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI'), ', ') AS schedule_periods,
+          (array_agg(room ORDER BY created_at DESC NULLS LAST))[1] AS room,
+          (array_agg(class_type ORDER BY created_at DESC NULLS LAST))[1] AS class_type
         FROM schedule_events
-        WHERE schedule_events.course_id = cs.course_id
-        ORDER BY created_at DESC
-        LIMIT 1
-      ) se ON true
+        GROUP BY course_id
+      ) se ON se.course_id = cs.course_id
       ORDER BY cs.scheduled_at DESC
       LIMIT ${input.limit} OFFSET ${input.offset}
     `),
