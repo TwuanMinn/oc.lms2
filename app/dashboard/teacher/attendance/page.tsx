@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/shared/PageHeader";
 import { AnimatedPage } from "@/components/ui/animated";
 import { formatDate } from "@/lib/utils";
 import { motion } from "motion/react";
+import { toast } from "sonner";
 import {
   Loader2,
   ClipboardList,
@@ -193,10 +194,14 @@ function AttendanceSheet({
     onSuccess: () => {
       utils.attendance.getSessionStudents.invalidate({ sessionId });
     },
+    onError: (e) => {
+      toast.error(e.message || "Failed to mark attendance");
+    },
   });
 
   function handleMark(studentId: string, status: AttendanceStatus) {
-    markMutation.mutate({ sessionId, studentId, status });
+    const attendanceDate = new Date().toISOString().split("T")[0];
+    markMutation.mutate({ sessionId, studentId, status, attendanceDate });
   }
 
   if (isLoading) {

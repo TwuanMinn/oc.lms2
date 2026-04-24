@@ -155,6 +155,7 @@ export async function createScheduleEvent(input: {
 export async function updateScheduleEvent(input: {
   eventId: string;
   userId: string;
+  userRole: "ADMIN" | "TEACHER" | "STUDENT";
   title?: string;
   description?: string;
   room?: string;
@@ -170,6 +171,22 @@ export async function updateScheduleEvent(input: {
 
   if (!existing) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Schedule event not found" });
+  }
+
+  if (input.userRole !== "ADMIN" && existing.createdBy !== input.userId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "You don't have permission to modify this schedule event",
+    });
+  }
+
+  const effectiveStart = input.startTime ? new Date(input.startTime) : existing.startTime;
+  const effectiveEnd = input.endTime ? new Date(input.endTime) : existing.endTime;
+  if (effectiveEnd <= effectiveStart) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "End time must be after start time",
+    });
   }
 
   const updateData: Record<string, unknown> = {};
@@ -200,7 +217,11 @@ export async function updateScheduleEvent(input: {
 }
 
 // ── Delete a schedule event ──
-export async function deleteScheduleEvent(eventId: string) {
+export async function deleteScheduleEvent(
+  eventId: string,
+  userId: string,
+  userRole: "ADMIN" | "TEACHER" | "STUDENT"
+) {
   const [existing] = await db
     .select()
     .from(scheduleEvents)
@@ -208,6 +229,13 @@ export async function deleteScheduleEvent(eventId: string) {
 
   if (!existing) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Schedule event not found" });
+  }
+
+  if (userRole !== "ADMIN" && existing.createdBy !== userId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "You don't have permission to delete this schedule event",
+    });
   }
 
   // Notify students before deleting

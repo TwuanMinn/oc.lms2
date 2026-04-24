@@ -55,6 +55,9 @@ export const scheduleRouter = router({
         classType: classTypeEnum.default("LECTURE"),
         startTime: z.string().min(1, "Start time is required"),
         endTime: z.string().min(1, "End time is required"),
+      }).refine((d) => new Date(d.endTime) > new Date(d.startTime), {
+        message: "End time must be after start time",
+        path: ["endTime"],
       })
     )
     .mutation(async ({ input, ctx }) => {
@@ -82,13 +85,18 @@ export const scheduleRouter = router({
       return scheduleService.updateScheduleEvent({
         ...input,
         userId: ctx.user.id,
+        userRole: ctx.user.role as "ADMIN" | "TEACHER" | "STUDENT",
       });
     }),
 
   // ── Delete a schedule event ──
   delete: teacherProcedure
     .input(z.object({ eventId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
-      return scheduleService.deleteScheduleEvent(input.eventId);
+    .mutation(async ({ input, ctx }) => {
+      return scheduleService.deleteScheduleEvent(
+        input.eventId,
+        ctx.user.id,
+        ctx.user.role as "ADMIN" | "TEACHER" | "STUDENT"
+      );
     }),
 });
